@@ -6,8 +6,9 @@ DEFUSE PROTOCOL’s Defuser view is a **WebXR** immersive-vr scene. You play it 
 
 1. Open the Pages URL (after deploy):
    ```
-   https://SmallerBytes.github.io/defuse-protocol/
+   https://sosgit-app.github.io/defuse-protocol/
    ```
+   Personal copy: `https://SmallerBytes.github.io/defuse-protocol/`
 2. On the Quest, open **Meta Quest Browser** and paste that URL.
 3. Choose **DIFFICULTY** (and optional **SEED** / **VIDEO QUALITY**) on the home screen **before** starting.
 4. Tap **START IN VR (QUEST)** and allow immersive VR.
@@ -29,7 +30,7 @@ Gameplay cues in VR (HTML HUD is hidden in-headset):
 - Timer + strike LEDs live **on the bomb**
 - Serial number is engraved on the **front** of the case — walk/snap around to read it
 - **Experts outside the headset** use the fixed Field Manual:
-  `https://smallerbytes.github.io/defuse-protocol/manual.html`
+  `https://sosgit-app.github.io/defuse-protocol/manual.html`
   (Print → Save as PDF). The in-app manual panel is removed — teammates stay on a phone or laptop.
 
 ## Desktop / flat screen

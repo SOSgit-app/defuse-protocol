@@ -38,8 +38,9 @@ The Node server under `server/` is optional legacy multiplayer code for local de
 ### GitHub Pages (Quest)
 
 1. Deploy `public/` to GitHub Pages (this repo can do that automatically).
-2. On the headset: `https://SmallerBytes.github.io/defuse-protocol/`
-3. Choose difficulty → **START IN VR (QUEST)**
+2. On the headset (SOS / classroom): `https://sosgit-app.github.io/defuse-protocol/`
+3. Personal copy: `https://SmallerBytes.github.io/defuse-protocol/`
+4. Choose difficulty → **START IN VR (QUEST)**
 
 > `file://` and plain HTTP will not start WebXR.
 
