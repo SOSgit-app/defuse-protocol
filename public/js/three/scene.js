@@ -3,6 +3,7 @@
  * Desktop: orbit camera, optional SSAO/DOF.
  * VR (Quest): immersive-vr stereo via Three.js XR, controller lasers,
  * head-relative move + snap turn; post-processing disabled in headset.
+ * AR (Quest): immersive-ar passthrough — virtual room hidden, bomb on table.
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -15,16 +16,16 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Device } from './device.js';
 import { createFly } from './fly.js';
 import { createDeskFan } from './fan.js';
-import { attachXR } from './xr.js?v=20260908k';
+import { attachXR } from './xr.js?v=20261007a';
 import { createPauseMenu } from './pauseMenu.js?v=20260908k';
 
 export function createDeviceScene(container, initialQuality = 'medium') {
-  /* ---------- renderer (XR-compatible) ---------- */
+  /* ---------- renderer (XR-compatible; alpha for AR passthrough) ---------- */
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
-    alpha: false,
+    alpha: true,
     powerPreference: 'high-performance',
-    // Required for immersive-vr on Quest Browser.
+    // Required for immersive-vr / immersive-ar on Quest Browser.
     xrCompatible: true
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -33,10 +34,12 @@ export function createDeviceScene(container, initialQuality = 'medium') {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.15;
   renderer.xr.enabled = true;
+  renderer.setClearColor(0x0a0c11, 1);
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a0c11);
+  const vrBackground = new THREE.Color(0x0a0c11);
+  scene.background = vrBackground;
   scene.fog = new THREE.Fog(0x0a0c11, 7, 18);
 
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -63,14 +66,18 @@ export function createDeviceScene(container, initialQuality = 'medium') {
   controls.maxPolarAngle = Math.PI * 0.52;
   controls.update();
 
-  /* ---------- the room ---------- */
+  /* ---------- the room (hidden in AR passthrough) ---------- */
+  const vrShell = new THREE.Group();
+  vrShell.name = 'vrShell';
+  scene.add(vrShell);
+
   const room = new THREE.Mesh(
     new THREE.BoxGeometry(16, 7, 16),
     new THREE.MeshStandardMaterial({ color: 0x161a22, roughness: 0.95, metalness: 0, side: THREE.BackSide })
   );
   room.position.y = 2.6;
   room.receiveShadow = true;
-  scene.add(room);
+  vrShell.add(room);
 
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(16, 16),
@@ -79,7 +86,7 @@ export function createDeviceScene(container, initialQuality = 'medium') {
   floor.rotation.x = -Math.PI / 2;
   floor.position.y = -0.851;
   floor.receiveShadow = true;
-  scene.add(floor);
+  vrShell.add(floor);
 
   const woodMat = new THREE.MeshStandardMaterial({ color: 0x5a4632, roughness: 0.7, metalness: 0.02 });
   const tableTop = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.07, 1.7), woodMat);
@@ -100,11 +107,12 @@ export function createDeviceScene(container, initialQuality = 'medium') {
     crate.position.set(x, s / 2 - 0.85, z);
     crate.rotation.y = x * 0.4;
     crate.castShadow = crate.receiveShadow = true;
-    scene.add(crate);
+    vrShell.add(crate);
   });
 
   /* ---------- lights ---------- */
-  scene.add(new THREE.AmbientLight(0x404a5a, 0.5));
+  const ambient = new THREE.AmbientLight(0x404a5a, 0.5);
+  scene.add(ambient);
 
   const keyLight = new THREE.SpotLight(0xfff1dd, 260, 14, 0.55, 0.55, 1.6);
   keyLight.position.set(1.8, 3.4, 1.2);
@@ -120,7 +128,7 @@ export function createDeviceScene(container, initialQuality = 'medium') {
   fixture.position.copy(keyLight.position).add(new THREE.Vector3(0, 0.05, 0));
   fixture.lookAt(0, 0, 0);
   fixture.rotateX(-Math.PI / 2);
-  scene.add(fixture);
+  vrShell.add(fixture);
 
   const lampLight = new THREE.PointLight(0xffb35c, 14, 7, 1.8);
   lampLight.position.set(-1.05, 0.52, -0.55);
@@ -137,11 +145,20 @@ export function createDeviceScene(container, initialQuality = 'medium') {
   lampShade.position.set(-1.05, 0.56, -0.55);
   const lampBase = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.03, 16), lampMat);
   lampBase.position.set(-1.05, 0.015, -0.55);
-  scene.add(lampArm, lampShade, lampBase);
+  vrShell.add(lampArm, lampShade, lampBase);
 
   const rim = new THREE.DirectionalLight(0x5a7fc0, 0.8);
   rim.position.set(-2.5, 1.6, 2.4);
   scene.add(rim);
+
+  const lightDefaults = {
+    ambient: 0.5,
+    key: 260,
+    lamp: 14,
+    rim: 0.8,
+    exposure: 1.15,
+    env: 0.25
+  };
 
   const fxLight = new THREE.PointLight(0xff2233, 0, 4, 1.5);
   fxLight.position.set(0, 0.9, 0);
@@ -227,6 +244,33 @@ export function createDeviceScene(container, initialQuality = 'medium') {
 
   let systemLeave = null; // 'mainMenu' | null
   let flyEnabled = false;
+  let xrMode = null; // 'vr' | 'ar' | null
+
+  function applyPassthroughVisuals(on) {
+    if (on) {
+      vrShell.visible = false;
+      scene.background = null;
+      scene.fog = null;
+      renderer.setClearColor(0x000000, 0);
+      ambient.intensity = 0.85;
+      keyLight.intensity = 90;
+      lampLight.intensity = 6;
+      rim.intensity = 0.35;
+      renderer.toneMappingExposure = 1.0;
+      scene.environmentIntensity = 0.45;
+    } else {
+      vrShell.visible = true;
+      scene.background = vrBackground;
+      scene.fog = new THREE.Fog(0x0a0c11, 7, 18);
+      renderer.setClearColor(0x0a0c11, 1);
+      ambient.intensity = lightDefaults.ambient;
+      keyLight.intensity = lightDefaults.key;
+      lampLight.intensity = lightDefaults.lamp;
+      rim.intensity = lightDefaults.rim;
+      renderer.toneMappingExposure = lightDefaults.exposure;
+      scene.environmentIntensity = lightDefaults.env;
+    }
+  }
 
   const pauseMenu = createPauseMenu({
     onResume: closePauseMenu,
@@ -351,16 +395,19 @@ export function createDeviceScene(container, initialQuality = 'medium') {
     },
     onMenuButton: openPauseMenu,
     isMenuOpen: () => pauseMenu.open,
-    onSessionStart: () => {
+    onSessionStart: (mode) => {
+      xrMode = mode === 'ar' ? 'ar' : 'vr';
       qualityBeforeVR = currentQuality;
       setQuality('low'); // comfort + perf defaults on Quest
       controls.enabled = false;
+      applyPassthroughVisuals(xrMode === 'ar');
       // Standing pose in front of the table (local-floor: y=0 is floor).
       camera.position.set(0, 0, 0);
       dolly.position.set(0, 0, 1.35);
       dolly.rotation.set(0, 0, 0);
       document.body.classList.add('xr-presenting');
-      if (api.onXRChange) api.onXRChange(true);
+      document.body.classList.toggle('xr-ar-presenting', xrMode === 'ar');
+      if (api.onXRChange) api.onXRChange(true, xrMode);
     },
     onSessionEnd: () => {
       pauseMenu.hide();
@@ -378,9 +425,11 @@ export function createDeviceScene(container, initialQuality = 'medium') {
       camera.position.set(0.95, 1.05, 1.25);
       controls.target.set(0, 0.12, 0);
       controls.update();
+      applyPassthroughVisuals(false);
+      xrMode = null;
       setQuality(qualityBeforeVR);
-      document.body.classList.remove('xr-presenting');
-      if (api.onXRChange) api.onXRChange(false);
+      document.body.classList.remove('xr-presenting', 'xr-ar-presenting');
+      if (api.onXRChange) api.onXRChange(false, null);
     }
   });
 
@@ -520,8 +569,11 @@ export function createDeviceScene(container, initialQuality = 'medium') {
     setStrikes(n) { if (device) device.setStrikes(n); },
     setQuality,
     enterVR: () => xr.enterVR(),
+    enterAR: () => xr.enterAR(),
+    enterXR: (mode) => xr.enterXR(mode),
     exitVR: () => xr.exitVR(),
     isXRPresenting: () => renderer.xr.isPresenting,
+    xrMode: () => xrMode,
     strikeFx() {
       fxLight.color.setHex(0xff2233);
       fxPulse = 22;

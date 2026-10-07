@@ -30,7 +30,7 @@ npm start          # http://localhost:3210  (auto-picks next free port if busy)
 
 1. Open the app URL (local `npm start` or GitHub Pages).
 2. On the **home screen**, pick **difficulty**, optional **seed**, and **video quality** — do this **before** entering VR.
-3. **START IN VR (QUEST)** on the headset, or **START ON SCREEN** on desktop (use **ENTER VR** when ready).
+3. **START IN VR (QUEST)** or **START IN AR (PASSTHROUGH)** on the headset, or **START ON SCREEN** on desktop (use **ENTER VR / AR** when ready).
 4. Teammates open **[Field Manual](public/manual.html)** on another device (print/PDF once; rules never change).
 
 The Node server under `server/` is optional legacy multiplayer code for local dev; the shipped client is **solo-only** and runs fully from static files.
@@ -40,7 +40,7 @@ The Node server under `server/` is optional legacy multiplayer code for local de
 1. Deploy `public/` to GitHub Pages (this repo can do that automatically).
 2. On the headset (SOS / classroom): `https://sosgit-app.github.io/defuse-protocol/`
 3. Personal copy: `https://SmallerBytes.github.io/defuse-protocol/`
-4. Choose difficulty → **START IN VR (QUEST)**
+4. Choose difficulty → **START IN VR (QUEST)** or **START IN AR (PASSTHROUGH)** (Quest 3 / 3S)
 
 > `file://` and plain HTTP will not start WebXR.
 

@@ -2,8 +2,8 @@
  * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
  * Teammates use manual.html on another device; no multiplayer in-app.
  */
-import { createDeviceScene } from './three/scene.js?v=20260908k';
-import { detectXRSupport } from './three/xr.js?v=20260908k';
+import { createDeviceScene } from './three/scene.js?v=20261007a';
+import { detectXRSupport } from './three/xr.js?v=20261007a';
 import { sound } from './sound.js';
 import { startSoloGame } from './solo/engine.js';
 
@@ -41,7 +41,10 @@ const state = {
   lastSecond: null,
   lastSeed: null,
   lastEnterVr: false,
+  lastXrMode: 'vr', // 'vr' | 'ar'
   xrSupported: false,
+  xrVr: false,
+  xrAr: false,
   menuPaused: false
 };
 
@@ -294,24 +297,53 @@ function recordStats(summary) {
   loadStats();
 }
 
-detectXRSupport().then(({ supported }) => {
+detectXRSupport().then(({ supported, vr, ar }) => {
   state.xrSupported = supported;
+  state.xrVr = !!vr;
+  state.xrAr = !!ar;
   const badge = $('xr-status');
   if (badge) {
-    badge.textContent = supported
-      ? 'WebXR ready — pick difficulty, then START IN VR (HTTPS required).'
-      : 'WebXR not detected here — use START ON SCREEN, or Quest Browser over HTTPS.';
+    if (vr && ar) {
+      badge.textContent = 'WebXR ready — VR or AR passthrough on Quest (HTTPS required).';
+    } else if (vr) {
+      badge.textContent = 'WebXR ready — START IN VR (HTTPS required). AR not available here.';
+    } else if (ar) {
+      badge.textContent = 'WebXR AR ready — START IN AR (HTTPS required).';
+    } else {
+      badge.textContent = 'WebXR not detected here — use START ON SCREEN, or Quest Browser over HTTPS.';
+    }
   }
-  $('btn-start-vr').disabled = !supported;
-  if (!supported) $('btn-start-vr').title = 'Requires Meta Quest Browser (or other WebXR) over HTTPS';
+  const btnVr = $('btn-start-vr');
+  const btnAr = $('btn-start-ar');
+  if (btnVr) {
+    btnVr.disabled = !vr;
+    if (!vr) btnVr.title = 'Requires Meta Quest Browser over HTTPS with immersive-vr';
+  }
+  if (btnAr) {
+    btnAr.disabled = !ar;
+    if (!ar) btnAr.title = 'Requires Quest Browser passthrough (Quest 3 / 3S / Pro) over HTTPS';
+  }
 });
+
+function syncEnterXrButton(presenting, mode) {
+  const btn = $('btn-enter-vr');
+  if (!btn) return;
+  if (presenting) {
+    btn.textContent = mode === 'ar' ? 'EXIT AR' : 'EXIT VR';
+  } else if (state.lastXrMode === 'ar' && state.xrAr) {
+    btn.textContent = 'ENTER AR';
+  } else {
+    btn.textContent = 'ENTER VR';
+  }
+}
 
 function ensureScene() {
   if (!state.scene3d) {
     state.scene3d = createDeviceScene($('scene-container'), getQuality());
-    state.scene3d.onXRChange = (presenting) => {
+    state.scene3d.onXRChange = (presenting, mode) => {
       document.body.classList.toggle('xr-presenting', presenting);
-      $('btn-enter-vr').textContent = presenting ? 'EXIT VR' : 'ENTER VR';
+      document.body.classList.toggle('xr-ar-presenting', presenting && mode === 'ar');
+      syncEnterXrButton(presenting, mode);
     };
     state.scene3d.onFlyChange = ({ landed, squashed }) => {
       if (state.session?.game) state.session.game._fly(landed && !squashed);
@@ -363,7 +395,7 @@ function handleSystemMenu(action) {
   }
 }
 
-function startMission({ enterVr = false, seed } = {}) {
+function startMission({ enterVr = false, xrMode = 'vr', seed } = {}) {
   persistPrefs();
   state.menuPaused = false;
   closeSettings();
@@ -375,7 +407,9 @@ function startMission({ enterVr = false, seed } = {}) {
   }
 
   sound.unlock();
+  const mode = xrMode === 'ar' ? 'ar' : 'vr';
   state.lastEnterVr = !!enterVr;
+  state.lastXrMode = mode;
   const missionSeed = (() => {
     const raw = seed !== undefined ? seed : getSeed();
     return String(raw || '').trim() || undefined;
@@ -427,14 +461,21 @@ function startMission({ enterVr = false, seed } = {}) {
   updateSolved(0, session.payload.modules.length);
 
   show('game');
-  $('scene-hint').textContent = enterVr
-    ? 'VR · Trigger = interact · Y = menu · Left stick = move · Right stick = snap turn'
-    : 'DRAG to orbit · CLICK to interact · ENTER VR when ready · read serial on case front';
+  syncEnterXrButton(false, mode);
+  if (enterVr) {
+    $('scene-hint').textContent = mode === 'ar'
+      ? 'AR · Passthrough · Trigger = interact · Y = menu · Bomb sits on the virtual table'
+      : 'VR · Trigger = interact · Y = menu · Left stick = move · Right stick = snap turn';
+  } else {
+    $('scene-hint').textContent =
+      'DRAG to orbit · CLICK to interact · ENTER VR / AR when ready · read serial on case front';
+  }
 
   if (enterVr) {
-    scene.enterVR().catch((err) => {
+    const label = mode === 'ar' ? 'AR' : 'VR';
+    scene.enterXR(mode).catch((err) => {
       $('home-error').textContent = err.message;
-      alert(`Could not start VR:\n${err.message}\n\nUse Meta Quest Browser over HTTPS.`);
+      alert(`Could not start ${label}:\n${err.message}\n\nUse Meta Quest Browser over HTTPS.`);
     });
   }
 }
@@ -447,7 +488,8 @@ function flashStrike() {
 }
 
 $('btn-start')?.addEventListener('click', () => startMission({ enterVr: false }));
-$('btn-start-vr')?.addEventListener('click', () => startMission({ enterVr: true }));
+$('btn-start-vr')?.addEventListener('click', () => startMission({ enterVr: true, xrMode: 'vr' }));
+$('btn-start-ar')?.addEventListener('click', () => startMission({ enterVr: true, xrMode: 'ar' }));
 $('btn-settings')?.addEventListener('click', openSettings);
 $('btn-settings-done')?.addEventListener('click', closeSettings);
 $('btn-settings-reset')?.addEventListener('click', () => {
@@ -468,10 +510,17 @@ $('btn-enter-vr')?.addEventListener('click', async () => {
   const scene = state.scene3d;
   if (!scene) return;
   try {
-    if (scene.isXRPresenting()) scene.exitVR();
-    else await scene.enterVR();
+    if (scene.isXRPresenting()) {
+      scene.exitVR();
+      return;
+    }
+    let mode = state.lastXrMode === 'ar' ? 'ar' : 'vr';
+    if (mode === 'ar' && !state.xrAr) mode = 'vr';
+    if (mode === 'vr' && !state.xrVr && state.xrAr) mode = 'ar';
+    state.lastXrMode = mode;
+    await scene.enterXR(mode);
   } catch (err) {
-    alert(`Could not start VR:\n${err.message}`);
+    alert(`Could not start headset mode:\n${err.message}`);
   }
 });
 
@@ -529,12 +578,20 @@ $('btn-seed-reset')?.addEventListener('click', () => setSeedField(''));
 $('btn-restart-bomb')?.addEventListener('click', () => {
   if (!state.lastSeed) return;
   setSeedField(state.lastSeed);
-  startMission({ enterVr: state.lastEnterVr, seed: state.lastSeed });
+  startMission({
+    enterVr: state.lastEnterVr,
+    xrMode: state.lastXrMode,
+    seed: state.lastSeed
+  });
 });
 
 $('btn-new-bomb')?.addEventListener('click', () => {
   setSeedField('');
-  startMission({ enterVr: state.lastEnterVr, seed: '' });
+  startMission({
+    enterVr: state.lastEnterVr,
+    xrMode: state.lastXrMode,
+    seed: ''
+  });
 });
 
 $('btn-back-home')?.addEventListener('click', () => {

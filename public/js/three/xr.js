@@ -1,5 +1,5 @@
 /**
- * WebXR helpers for Quest / immersive-vr.
+ * WebXR helpers for Quest — immersive-vr (virtual room) and immersive-ar (passthrough).
  * Three.js owns stereo + XRWebGLLayer; this module adds controllers,
  * comfort locomotion (head-relative move + snap turn), and laser interact.
  */
@@ -12,7 +12,7 @@ const DEADZONE = 0.25;
 
 /**
  * Attach XR to an existing Three.js scene/renderer.
- * @returns {{ enterVR, exitVR, isPresenting, tick, setEnabled }}
+ * @returns {{ enterVR, enterAR, enterXR, exitVR, isPresenting, mode, tick, ... }}
  */
 export function attachXR({
   renderer,
@@ -36,6 +36,7 @@ export function attachXR({
   const rays = [];
   const tempMatrix = new THREE.Matrix4();
   const raycaster = new THREE.Raycaster();
+  let currentMode = null; // 'vr' | 'ar' | null
 
   for (let i = 0; i < 2; i++) {
     const controller = renderer.xr.getController(i);
@@ -237,8 +238,9 @@ export function attachXR({
       dolly.position.addScaledVector(wish, MOVE_SPEED * dt);
 
       // Soft bounds so you don't walk into the void
-      dolly.position.x = THREE.MathUtils.clamp(dolly.position.x, -3.5, 3.5);
-      dolly.position.z = THREE.MathUtils.clamp(dolly.position.z, -3.5, 3.5);
+      const bound = currentMode === 'ar' ? 5.0 : 3.5;
+      dolly.position.x = THREE.MathUtils.clamp(dolly.position.x, -bound, bound);
+      dolly.position.z = THREE.MathUtils.clamp(dolly.position.z, -bound, bound);
     }
   }
 
@@ -248,28 +250,51 @@ export function attachXR({
     if (sessionListenersBound) return;
     sessionListenersBound = true;
     renderer.xr.addEventListener('sessionstart', () => {
-      onSessionStart && onSessionStart();
+      onSessionStart && onSessionStart(currentMode || 'vr');
     });
     renderer.xr.addEventListener('sessionend', () => {
-      onSessionEnd && onSessionEnd();
+      const ended = currentMode;
+      currentMode = null;
+      onSessionEnd && onSessionEnd(ended);
     });
   }
   bindSessionEvents();
 
-  async function enterVR() {
+  async function enterXR(mode = 'vr') {
     if (!navigator.xr) throw new Error('WebXR not available in this browser.');
-    const ok = await navigator.xr.isSessionSupported('immersive-vr');
-    if (!ok) throw new Error('immersive-vr is not supported on this device.');
+    const sessionMode = mode === 'ar' ? 'immersive-ar' : 'immersive-vr';
+    const ok = await navigator.xr.isSessionSupported(sessionMode);
+    if (!ok) {
+      throw new Error(
+        mode === 'ar'
+          ? 'immersive-ar (passthrough) is not supported on this device/browser.'
+          : 'immersive-vr is not supported on this device.'
+      );
+    }
 
     // Ensure GL context is XR-compatible before requesting the session.
     const gl = renderer.getContext();
     if (gl && gl.makeXRCompatible) await gl.makeXRCompatible();
 
     const sessionInit = {
-      optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers']
+      optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers', 'anchors']
     };
-    const session = await navigator.xr.requestSession('immersive-vr', sessionInit);
-    await renderer.xr.setSession(session);
+    currentMode = mode === 'ar' ? 'ar' : 'vr';
+    try {
+      const session = await navigator.xr.requestSession(sessionMode, sessionInit);
+      await renderer.xr.setSession(session);
+    } catch (err) {
+      currentMode = null;
+      throw err;
+    }
+  }
+
+  function enterVR() {
+    return enterXR('vr');
+  }
+
+  function enterAR() {
+    return enterXR('ar');
   }
 
   function exitVR() {
@@ -279,8 +304,11 @@ export function attachXR({
 
   return {
     enterVR,
+    enterAR,
+    enterXR,
     exitVR,
     isPresenting: () => renderer.xr.isPresenting,
+    mode: () => currentMode,
     tick(dt) {
       if (!renderer.xr.isPresenting) return;
       tickMenuButton();
@@ -294,15 +322,23 @@ export function attachXR({
   };
 }
 
-/** Detect immersive-vr support (Quest Browser etc.). */
+/** Detect immersive-vr / immersive-ar support (Quest Browser etc.). */
 export async function detectXRSupport() {
   if (!navigator.xr || !navigator.xr.isSessionSupported) {
-    return { supported: false, reason: 'navigator.xr missing' };
+    return { supported: false, vr: false, ar: false, reason: 'navigator.xr missing' };
   }
+  let vr = false;
+  let ar = false;
   try {
-    const supported = await navigator.xr.isSessionSupported('immersive-vr');
-    return { supported, reason: supported ? 'ok' : 'immersive-vr not supported' };
-  } catch (e) {
-    return { supported: false, reason: e.message };
-  }
+    vr = await navigator.xr.isSessionSupported('immersive-vr');
+  } catch (_) { /* ignore */ }
+  try {
+    ar = await navigator.xr.isSessionSupported('immersive-ar');
+  } catch (_) { /* ignore */ }
+  return {
+    supported: vr || ar,
+    vr,
+    ar,
+    reason: vr || ar ? 'ok' : 'no immersive-vr / immersive-ar'
+  };
 }

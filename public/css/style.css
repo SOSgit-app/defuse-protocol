@@ -255,6 +255,15 @@ body {
   color: var(--accent) !important;
   letter-spacing: 0.08em;
 }
+.btn-ar {
+  width: 100%;
+  font-weight: bold;
+  background: #1a2a3a !important;
+  border-color: #5ab0e0 !important;
+  color: #c8e8f8 !important;
+}
+.btn-ar:hover { filter: brightness(1.12); }
+.btn-ar:disabled { opacity: 0.45; filter: none; }
 .xr-status {
   text-align: center;
   font-size: 0.7rem;
@@ -285,6 +294,11 @@ body.xr-presenting #scene-container {
   border: none;
   border-radius: 0;
   z-index: 40;
+}
+/* AR passthrough: keep canvas transparent so the real room shows through */
+body.xr-ar-presenting #scene-container,
+body.xr-ar-presenting #scene-container canvas {
+  background: transparent !important;
 }
 #scene-container:active { cursor: grabbing; }
 #scene-container canvas { display: block; width: 100% !important; height: 100% !important; }

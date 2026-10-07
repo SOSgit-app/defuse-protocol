@@ -14,7 +14,7 @@
         <button id="btn-settings" type="button" class="btn small">SETTINGS</button>
       </div>
       <h1 class="logo">DEFUSE<span>PROTOCOL</span></h1>
-      <p class="tagline">You defuse in VR. Your team holds the manual. Talk fast.</p>
+      <p class="tagline">You defuse in VR or AR. Your team holds the manual. Talk fast.</p>
       <p id="xr-status" class="xr-status">Checking WebXR…</p>
 
       <label class="field">
@@ -46,6 +46,7 @@
 
       <div class="home-actions">
         <button id="btn-start-vr" class="btn primary">START IN VR (QUEST)</button>
+        <button id="btn-start-ar" class="btn btn-ar">START IN AR (PASSTHROUGH)</button>
         <button id="btn-start" class="btn">START ON SCREEN</button>
         <a class="btn ghost" href="manual.html" target="_blank" rel="noopener">OPEN FIELD MANUAL (PRINT / PDF)</a>
       </div>
@@ -53,7 +54,8 @@
       <div id="home-error" class="error-text"></div>
       <p class="hint controls-hint">
         Teammates open the <a href="manual.html" target="_blank" rel="noopener">Field Manual</a> on a phone or laptop — not in the headset.
-        Trigger = interact · Left stick = move · Right stick = snap turn · HTTPS required for VR.
+        <strong>VR</strong> = virtual room · <strong>AR</strong> = real room via passthrough (Quest 3 / 3S / Pro).
+        Trigger = interact · Left stick = move · Right stick = snap turn · HTTPS required.
       </p>
 
       <div id="stats-panel" class="stats-panel hidden">
@@ -163,6 +165,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=20260908k"></script>
+  <script type="module" src="js/main.js?v=20261007a"></script>
 </body>
 </html>

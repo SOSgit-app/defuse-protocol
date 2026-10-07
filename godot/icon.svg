@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="20" fill="#0a0c11"/>
+  <rect x="24" y="48" width="80" height="44" rx="8" fill="#4a505c"/>
+  <rect x="36" y="36" width="56" height="16" rx="3" fill="#39d98a"/>
+  <text x="64" y="78" text-anchor="middle" font-family="Consolas,monospace" font-size="18" font-weight="700" fill="#cfd6e4">DP</text>
+</svg>
