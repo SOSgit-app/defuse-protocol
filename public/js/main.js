@@ -2,8 +2,8 @@
  * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
  * Teammates use manual.html on another device; no multiplayer in-app.
  */
-import { createDeviceScene } from './three/scene.js?v=20261007a';
-import { detectXRSupport } from './three/xr.js?v=20261007a';
+import { createDeviceScene } from './three/scene.js?v=20261007b';
+import { detectXRSupport } from './three/xr.js?v=20261007b';
 import { sound } from './sound.js';
 import { startSoloGame } from './solo/engine.js';
 
@@ -464,7 +464,7 @@ function startMission({ enterVr = false, xrMode = 'vr', seed } = {}) {
   syncEnterXrButton(false, mode);
   if (enterVr) {
     $('scene-hint').textContent = mode === 'ar'
-      ? 'AR · Passthrough · Trigger = interact · Y = menu · Bomb sits on the virtual table'
+      ? 'AR · Aim at a table · Trigger = place bomb · then play · Y = menu (MOVE BOMB)'
       : 'VR · Trigger = interact · Y = menu · Left stick = move · Right stick = snap turn';
   } else {
     $('scene-hint').textContent =

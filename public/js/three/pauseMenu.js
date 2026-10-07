@@ -73,23 +73,24 @@ function makeValue(w, h) {
   };
 }
 
-export function createPauseMenu({ onResume, onMainMenu, getSettings, setSettings }) {
+export function createPauseMenu({ onResume, onMainMenu, onReposition, getSettings, setSettings }) {
   const group = new THREE.Group();
   group.visible = false;
   group.renderOrder = 40;
 
   let page = 'pause';
+  let repositionEnabled = false;
   const pausePage = new THREE.Group();
   const settingsPage = new THREE.Group();
   group.add(pausePage, settingsPage);
 
   const pauseBezel = new THREE.Mesh(
-    new RoundedBoxGeometry(0.24, 0.2, 0.012, 3, 0.008),
+    new RoundedBoxGeometry(0.24, 0.24, 0.012, 3, 0.008),
     new THREE.MeshBasicMaterial({ color: 0x0b0e14 })
   );
   pausePage.add(pauseBezel);
   const pauseBack = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.255, 0.215),
+    new THREE.PlaneGeometry(0.255, 0.255),
     new THREE.MeshBasicMaterial({ color: 0x0b0e14, side: THREE.DoubleSide })
   );
   pauseBack.position.z = -0.011;
@@ -104,21 +105,27 @@ export function createPauseMenu({ onResume, onMainMenu, getSettings, setSettings
     ctx.textBaseline = 'middle';
     ctx.fillText('PAUSED', w / 2, h / 2 + 3);
   });
-  pauseTitle.position.set(0, 0.07, 0.014);
+  pauseTitle.position.set(0, 0.09, 0.014);
   pausePage.add(pauseTitle);
 
   const resumeBtn = makeButton('RESUME', 0.2, 0.032, '#2f8a4a', '#f2f6f3');
-  resumeBtn.position.set(0, 0.026, 0.014);
+  resumeBtn.position.set(0, 0.046, 0.014);
   resumeBtn.userData.onClick = () => onResume && onResume();
   pausePage.add(resumeBtn);
 
+  const repositionBtn = makeButton('MOVE BOMB', 0.2, 0.032, '#3a7ca5', '#f2f6f3');
+  repositionBtn.position.set(0, 0.008, 0.014);
+  repositionBtn.visible = false;
+  repositionBtn.userData.onClick = () => onReposition && onReposition();
+  pausePage.add(repositionBtn);
+
   const settingsBtn = makeButton('SETTINGS', 0.2, 0.032, '#cfd6e4', '#12151b');
-  settingsBtn.position.set(0, -0.012, 0.014);
+  settingsBtn.position.set(0, -0.03, 0.014);
   settingsBtn.userData.onClick = () => setPage('settings');
   pausePage.add(settingsBtn);
 
   const menuBtn = makeButton('MAIN MENU', 0.2, 0.032, '#c43240', '#f7ecec');
-  menuBtn.position.set(0, -0.05, 0.014);
+  menuBtn.position.set(0, -0.068, 0.014);
   menuBtn.userData.onClick = () => onMainMenu && onMainMenu();
   pausePage.add(menuBtn);
 
@@ -131,7 +138,7 @@ export function createPauseMenu({ onResume, onMainMenu, getSettings, setSettings
     ctx.textBaseline = 'middle';
     ctx.fillText('Y TO CLOSE', w / 2, h / 2 + 2);
   });
-  pauseHint.position.set(0, -0.082, 0.014);
+  pauseHint.position.set(0, -0.102, 0.014);
   pausePage.add(pauseHint);
 
   const settingsBezel = new THREE.Mesh(
@@ -244,7 +251,33 @@ export function createPauseMenu({ onResume, onMainMenu, getSettings, setSettings
   settingsPage.add(settingsResume);
   settingsTargets.push(settingsResume);
 
-  const pauseTargets = [resumeBtn, settingsBtn, menuBtn];
+  function pauseTargets() {
+    const list = [resumeBtn];
+    if (repositionEnabled) list.push(repositionBtn);
+    list.push(settingsBtn, menuBtn);
+    return list;
+  }
+
+  function layoutPauseButtons() {
+    repositionBtn.visible = repositionEnabled;
+    if (repositionEnabled) {
+      resumeBtn.position.y = 0.046;
+      repositionBtn.position.y = 0.008;
+      settingsBtn.position.y = -0.03;
+      menuBtn.position.y = -0.068;
+      pauseHint.position.y = -0.102;
+      pauseBezel.scale.y = 1.2;
+      pauseBack.scale.y = 1.2;
+    } else {
+      resumeBtn.position.y = 0.026;
+      settingsBtn.position.y = -0.012;
+      menuBtn.position.y = -0.05;
+      pauseHint.position.y = -0.082;
+      pauseBezel.scale.y = 1;
+      pauseBack.scale.y = 1;
+    }
+  }
+  layoutPauseButtons();
 
   function readSettings() {
     const s = (getSettings && getSettings()) || {};
@@ -311,10 +344,14 @@ export function createPauseMenu({ onResume, onMainMenu, getSettings, setSettings
   return {
     group,
     get targets() {
-      return page === 'settings' ? settingsTargets : pauseTargets;
+      return page === 'settings' ? settingsTargets : pauseTargets();
     },
     get open() {
       return group.visible;
+    },
+    setRepositionVisible(on) {
+      repositionEnabled = !!on;
+      layoutPauseButtons();
     },
     show() {
       setPage('pause');

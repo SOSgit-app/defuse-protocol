@@ -16,8 +16,9 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Device } from './device.js';
 import { createFly } from './fly.js';
 import { createDeskFan } from './fan.js';
-import { attachXR } from './xr.js?v=20261007a';
-import { createPauseMenu } from './pauseMenu.js?v=20260908k';
+import { attachXR } from './xr.js?v=20261007b';
+import { createPauseMenu } from './pauseMenu.js?v=20261007b';
+import { createArPlacement } from './arPlacement.js?v=20261007b';
 
 export function createDeviceScene(container, initialQuality = 'medium') {
   /* ---------- renderer (XR-compatible; alpha for AR passthrough) ---------- */
@@ -88,17 +89,22 @@ export function createDeviceScene(container, initialQuality = 'medium') {
   floor.receiveShadow = true;
   vrShell.add(floor);
 
+  /* Stage = table + bomb + fan — snapped onto real planes in AR */
+  const stage = new THREE.Group();
+  stage.name = 'stage';
+  scene.add(stage);
+
   const woodMat = new THREE.MeshStandardMaterial({ color: 0x5a4632, roughness: 0.7, metalness: 0.02 });
   const tableTop = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.07, 1.7), woodMat);
   tableTop.position.y = -0.035;
   tableTop.castShadow = tableTop.receiveShadow = true;
-  scene.add(tableTop);
+  stage.add(tableTop);
   const legGeo = new THREE.BoxGeometry(0.09, 0.78, 0.09);
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
     const leg = new THREE.Mesh(legGeo, woodMat);
     leg.position.set(sx * 1.18, -0.46, sz * 0.73);
     leg.castShadow = true;
-    scene.add(leg);
+    stage.add(leg);
   }
 
   const crateMat = new THREE.MeshStandardMaterial({ color: 0x3a3327, roughness: 0.85 });
@@ -234,7 +240,8 @@ export function createDeviceScene(container, initialQuality = 'medium') {
   scene.add(fly.group);
   const fan = createDeskFan((on) => api.onFanChange?.(on));
   fan.setVisible(false);
-  scene.add(fan.group);
+  stage.add(fan.group);
+  const arPlace = createArPlacement({ renderer, scene, stage });
   const headPos = new THREE.Vector3();
   const fanPos = new THREE.Vector3();
   const timerPos = new THREE.Vector3();
@@ -280,6 +287,10 @@ export function createDeviceScene(container, initialQuality = 'medium') {
       setGripModelVisible(hiddenGrip, true);
       hiddenGrip = null;
       api.onSystemMenu?.('mainMenu');
+    },
+    onReposition: () => {
+      arPlace.unlock();
+      closePauseMenu();
     },
     getSettings: () => api.getVrSettings?.(),
     setSettings: (next) => api.onVrSettings?.(next)
@@ -336,6 +347,7 @@ export function createDeviceScene(container, initialQuality = 'medium') {
 
   function interactTargets() {
     if (pauseMenu.open) return pauseMenu.targets;
+    if (arPlace.isPlacing()) return [];
     const t = device ? [...device.targets] : [];
     if (fan.group.visible) t.push(fan.hit);
     return t;
@@ -393,6 +405,9 @@ export function createDeviceScene(container, initialQuality = 'medium') {
     onSelect: (obj) => {
       if (obj.userData.onClick) obj.userData.onClick();
     },
+    onSelectEmpty: () => {
+      if (arPlace.isPlacing()) arPlace.tryPlace();
+    },
     onMenuButton: openPauseMenu,
     isMenuOpen: () => pauseMenu.open,
     onSessionStart: (mode) => {
@@ -401,10 +416,18 @@ export function createDeviceScene(container, initialQuality = 'medium') {
       setQuality('low'); // comfort + perf defaults on Quest
       controls.enabled = false;
       applyPassthroughVisuals(xrMode === 'ar');
-      // Standing pose in front of the table (local-floor: y=0 is floor).
       camera.position.set(0, 0, 0);
-      dolly.position.set(0, 0, 1.35);
       dolly.rotation.set(0, 0, 0);
+      if (xrMode === 'ar') {
+        // Stay at tracking origin; bomb snaps onto a real plane.
+        dolly.position.set(0, 0, 0);
+        arPlace.begin();
+        pauseMenu.setRepositionVisible(true);
+      } else {
+        dolly.position.set(0, 0, 1.35);
+        arPlace.end();
+        pauseMenu.setRepositionVisible(false);
+      }
       document.body.classList.add('xr-presenting');
       document.body.classList.toggle('xr-ar-presenting', xrMode === 'ar');
       if (api.onXRChange) api.onXRChange(true, xrMode);
@@ -415,6 +438,8 @@ export function createDeviceScene(container, initialQuality = 'medium') {
       hiddenGrip = null;
       if (pauseMenu.group.parent !== scene) scene.add(pauseMenu.group);
       pauseMenu.group.scale.setScalar(1);
+      pauseMenu.setRepositionVisible(false);
+      arPlace.end();
       if (systemLeave !== 'mainMenu') {
         api.onSystemMenu?.('resume');
       }
@@ -444,7 +469,7 @@ export function createDeviceScene(container, initialQuality = 'medium') {
   const clock = new THREE.Clock();
   let running = true;
 
-  function loop() {
+  function loop(_time, frame) {
     if (!running) return;
     const dt = Math.min(clock.getDelta(), 0.1);
     const t = clock.elapsedTime;
@@ -454,6 +479,9 @@ export function createDeviceScene(container, initialQuality = 'medium') {
 
     if (!presenting) controls.update();
     xr.tick(dt);
+    if (presenting && xrMode === 'ar') {
+      arPlace.tick(frame || renderer.xr.getFrame());
+    }
     if (pauseMenu.open) placePauseMenu();
     if (device) device.tick(dt, t);
     fan.tick(dt);
@@ -529,9 +557,9 @@ export function createDeviceScene(container, initialQuality = 'medium') {
       pauseMenu.hide();
       setGripModelVisible(hiddenGrip, true);
       hiddenGrip = null;
-      if (device) scene.remove(device.group);
+      if (device) stage.remove(device.group);
       device = new Device(payload, send);
-      scene.add(device.group);
+      stage.add(device.group);
       lastLanded = false;
       flyEnabled = !!enableFly;
       fan.setVisible(flyEnabled);

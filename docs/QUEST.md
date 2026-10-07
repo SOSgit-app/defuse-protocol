@@ -25,8 +25,9 @@ There is no APK required for the browser path.
 
 - Requires a headset/browser that supports **`immersive-ar`** (Quest 3 / 3S / Pro).
 - The dark virtual room, floor, and crates are hidden; passthrough shows through.
-- The wooden table and bomb stay as holograms so modules remain easy to aim at.
-- Clear a bit of floor space; the bomb appears in front of you at standing height.
+- **Plane snap:** aim the reticle at a real table (or floor), then **trigger** to place the bomb. Quest may prompt **room / desk setup** if no planes are found.
+- After placing, play as usual. **Y → MOVE BOMB** to snap again.
+- Best results: set up a desk surface in Quest **Settings → Boundary → Mixed Reality** (or Space Setup).
 
 ## Controller map (Quest Touch)
 
@@ -65,7 +66,7 @@ Open the printed `https://…` URL on the Quest.
 - **Experts** should use the printed/PDF Field Manual on a phone or laptop — not the headset
 - **Perf:** headset sessions force LOW quality (no SSAO/DOF, no point-light shadows). Quest 2 may still dip in dense modules
 - **Comfort:** snap turn only (no smooth turn). No teleport yet
-- **AR:** no plane snap / table anchoring yet — bomb uses the same floor-relative pose as VR
+- **AR:** plane snap uses hit-test + detected horizontal planes; quality depends on Quest space setup
 - Three.js owns stereo / `XRWebGLLayer`; we do **not** stack CRT/barrel post-FX in-headset (Quest already lens-distorts)
 
 ## Rebuild solo bundle after server module changes

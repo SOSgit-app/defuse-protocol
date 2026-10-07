@@ -21,6 +21,7 @@ export function attachXR({
   dolly,
   getTargets,
   onSelect,
+  onSelectEmpty,
   onSessionStart,
   onSessionEnd,
   onMenuButton,
@@ -60,6 +61,8 @@ export function attachXR({
       const hit = castFromController(controller);
       if (hit && hit.object.userData.onClick) {
         onSelect(hit.object);
+      } else if (onSelectEmpty) {
+        onSelectEmpty(controller);
       }
     });
     controllers.push(controller);
@@ -276,14 +279,47 @@ export function attachXR({
     const gl = renderer.getContext();
     if (gl && gl.makeXRCompatible) await gl.makeXRCompatible();
 
-    const sessionInit = {
-      optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers', 'anchors']
-    };
+    const sessionInit = mode === 'ar'
+      ? {
+          requiredFeatures: ['local-floor'],
+          optionalFeatures: [
+            'plane-detection',
+            'hit-test',
+            'anchors',
+            'bounded-floor',
+            'hand-tracking',
+            'layers'
+          ]
+        }
+      : {
+          optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers', 'anchors']
+        };
     currentMode = mode === 'ar' ? 'ar' : 'vr';
     try {
       const session = await navigator.xr.requestSession(sessionMode, sessionInit);
       await renderer.xr.setSession(session);
     } catch (err) {
+      // Retry AR without required local-floor if the headset rejects it.
+      if (mode === 'ar') {
+        try {
+          const session = await navigator.xr.requestSession(sessionMode, {
+            optionalFeatures: [
+              'local-floor',
+              'plane-detection',
+              'hit-test',
+              'anchors',
+              'bounded-floor',
+              'hand-tracking',
+              'layers'
+            ]
+          });
+          await renderer.xr.setSession(session);
+          return;
+        } catch (err2) {
+          currentMode = null;
+          throw err2;
+        }
+      }
       currentMode = null;
       throw err;
     }
