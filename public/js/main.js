@@ -2,8 +2,8 @@
  * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
  * Teammates use manual.html on another device; no multiplayer in-app.
  */
-import { createDeviceScene } from './three/scene.js?v=20261007b';
-import { detectXRSupport } from './three/xr.js?v=20261007b';
+import { createDeviceScene } from './three/scene.js?v=20261013a';
+import { detectXRSupport } from './three/xr.js?v=20261013a';
 import { sound } from './sound.js';
 import { startSoloGame } from './solo/engine.js';
 
@@ -15,11 +15,14 @@ const DIFF_KEY = 'defuse-protocol.difficulty';
 const TIME_KEY = 'defuse-protocol.times';
 const STATS_KEY = 'defuse-protocol.stats';
 const FLY_KEY = 'defuse-protocol.fly';
+const TABLE_HEIGHT_KEY = 'defuse-protocol.tableHeight';
 
 const DEFAULT_TIMES = { easy: 8 * 60 * 1000, normal: 10 * 60 * 1000, hard: 12 * 60 * 1000 };
 const DEFAULT_STRIKES = { easy: 3, normal: 3, hard: 2 };
 const STRIKE_KEY = 'defuse-protocol.strikes';
 const STRIKE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+const DEFAULT_TABLE_HEIGHT = 0.75;
+const TABLE_HEIGHT_OPTIONS = [0.55, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 1.00, 1.10];
 const TIME_VER_KEY = 'defuse-protocol.times.v';
 const PREV_STOCK_TIMES = { easy: 6 * 60 * 1000, normal: 5 * 60 * 1000, hard: 8 * 60 * 1000 };
 const TIME_OPTIONS_MS = [
@@ -94,6 +97,7 @@ function loadPrefs() {
 loadPrefs();
 fillTimeSelects();
 fillStrikeSelects();
+fillTableHeightSelect();
 refreshDifficultyLabels();
 
 $('select-quality').addEventListener('change', () => {
@@ -223,6 +227,7 @@ function refreshDifficultyLabels() {
 function openSettings() {
   fillTimeSelects();
   fillStrikeSelects();
+  fillTableHeightSelect();
   $('select-fly').value = loadFly() ? 'yes' : 'no';
   $('settings-overlay').classList.remove('hidden');
 }
@@ -231,6 +236,9 @@ function closeSettings() {
   saveTimes(readTimesFromSelects());
   saveStrikes(readStrikesFromSelects());
   saveFly($('select-fly').value === 'yes');
+  const height = Number($('select-table-height')?.value);
+  saveTableHeight(height);
+  if (state.scene3d) state.scene3d.setTableHeight(loadTableHeight());
   refreshDifficultyLabels();
   $('settings-overlay').classList.add('hidden');
   resumeBomb();
@@ -257,6 +265,36 @@ function loadFly() {
 
 function saveFly(on) {
   localStorage.setItem(FLY_KEY, on ? '1' : '0');
+}
+
+function clampTableHeight(m) {
+  const n = Number(m);
+  if (!Number.isFinite(n)) return DEFAULT_TABLE_HEIGHT;
+  return TABLE_HEIGHT_OPTIONS.reduce((best, opt) =>
+    Math.abs(opt - n) < Math.abs(best - n) ? opt : best
+  );
+}
+
+function loadTableHeight() {
+  return clampTableHeight(localStorage.getItem(TABLE_HEIGHT_KEY) ?? DEFAULT_TABLE_HEIGHT);
+}
+
+function saveTableHeight(m) {
+  localStorage.setItem(TABLE_HEIGHT_KEY, String(clampTableHeight(m)));
+}
+
+function fmtTableHeight(m) {
+  return `${Math.round(clampTableHeight(m) * 100)} cm`;
+}
+
+function fillTableHeightSelect() {
+  const sel = $('select-table-height');
+  if (!sel) return;
+  const cur = loadTableHeight();
+  sel.innerHTML = TABLE_HEIGHT_OPTIONS.map((m) =>
+    `<option value="${m}">${fmtTableHeight(m)}</option>`
+  ).join('');
+  sel.value = String(cur);
 }
 
 function loadStats() {
@@ -356,12 +394,16 @@ function ensureScene() {
       times: loadTimes(),
       strikes: loadStrikes(),
       fly: loadFly(),
+      tableHeight: loadTableHeight(),
       timeOptions: TIME_OPTIONS_MS,
-      strikeOptions: STRIKE_OPTIONS
+      strikeOptions: STRIKE_OPTIONS,
+      tableHeightOptions: TABLE_HEIGHT_OPTIONS
     });
     state.scene3d.onVrSettings = applyVrSettings;
+    state.scene3d.setTableHeight(loadTableHeight());
   } else {
     state.scene3d.setQuality(getQuality());
+    state.scene3d.setTableHeight(loadTableHeight());
   }
   return state.scene3d;
 }
@@ -370,12 +412,17 @@ function applyVrSettings(next) {
   if (next.times) saveTimes(next.times);
   if (next.strikes) saveStrikes(next.strikes);
   if (typeof next.fly === 'boolean') saveFly(next.fly);
+  if (next.tableHeight != null) saveTableHeight(next.tableHeight);
   fillTimeSelects();
   fillStrikeSelects();
+  fillTableHeightSelect();
   $('select-fly').value = loadFly() ? 'yes' : 'no';
   refreshDifficultyLabels();
 
-  if (state.scene3d) state.scene3d.setFlyEnabled(loadFly());
+  if (state.scene3d) {
+    state.scene3d.setFlyEnabled(loadFly());
+    state.scene3d.setTableHeight(loadTableHeight());
+  }
   if (state.session?.game && next.strikes) {
     const diff = state.session.game.difficulty;
     const max = next.strikes[diff];
@@ -496,9 +543,12 @@ $('btn-settings-reset')?.addEventListener('click', () => {
   saveTimes({ ...DEFAULT_TIMES });
   saveStrikes({ ...DEFAULT_STRIKES });
   saveFly(false);
+  saveTableHeight(DEFAULT_TABLE_HEIGHT);
   fillTimeSelects();
   fillStrikeSelects();
+  fillTableHeightSelect();
   $('select-fly').value = 'no';
+  if (state.scene3d) state.scene3d.setTableHeight(DEFAULT_TABLE_HEIGHT);
   refreshDifficultyLabels();
 });
 $('settings-overlay')?.addEventListener('click', (e) => {

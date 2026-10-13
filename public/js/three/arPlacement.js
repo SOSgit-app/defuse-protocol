@@ -1,149 +1,117 @@
 /**
- * AR plane snapping — hit-test / plane-detection reticle + place trigger.
- * Quest Browser: immersive-ar with plane-detection (+ hit-test when available).
+ * AR manual placement — smooth move / height / turn / scale with sticks.
+ * Trigger locks the stage until MOVE BOMB unlocks it again.
  */
 import * as THREE from 'three';
 
-function planeNormalFromPose(matrix) {
-  // Plane local +Y is the normal in plane space.
-  return new THREE.Vector3(matrix[4], matrix[5], matrix[6]).normalize();
+const MOVE_SPEED = 1.35;
+const HEIGHT_SPEED = 0.9;
+const YAW_SPEED = 1.8;
+const SCALE_SPEED = 0.9;
+const DEADZONE = 0.18;
+const SCALE_MIN = 0.55;
+const SCALE_MAX = 1.65;
+
+function readAxes(gamepad) {
+  if (!gamepad || !gamepad.axes) return { x: 0, y: 0 };
+  const ax = gamepad.axes;
+  if (ax.length >= 4) return { x: ax[2], y: ax[3] };
+  return { x: ax[0] || 0, y: ax[1] || 0 };
 }
 
-function hitTestPlanes(frame, origin, direction, referenceSpace) {
-  const planes = frame.detectedPlanes;
-  if (!planes || !planes.size) return null;
-
-  let best = null;
-  planes.forEach((plane) => {
-    if (plane.orientation && plane.orientation !== 'horizontal') return;
-    const pose = frame.getPose(plane.planeSpace, referenceSpace);
-    if (!pose) return;
-    const m = pose.transform.matrix;
-    const normal = planeNormalFromPose(m);
-    // Prefer upward-facing surfaces (tables / floors).
-    if (normal.y < 0.55) return;
-
-    const center = new THREE.Vector3(m[12], m[13], m[14]);
-    const denom = direction.dot(normal);
-    if (Math.abs(denom) < 1e-4) return;
-    const t = center.clone().sub(origin).dot(normal) / denom;
-    if (t < 0.05 || t > 4.5) return;
-
-    const point = origin.clone().addScaledVector(direction, t);
-    // Keep hit roughly inside the plane polygon if present.
-    if (plane.polygon && plane.polygon.length >= 3) {
-      const inv = new THREE.Matrix4().fromArray(m).invert();
-      const local = point.clone().applyMatrix4(inv);
-      if (!pointInPolygonXZ(local.x, local.z, plane.polygon)) return;
-    }
-
-    if (!best || t < best.distance) {
-      best = { distance: t, point, normal, matrix: m };
-    }
-  });
-  return best;
-}
-
-function pointInPolygonXZ(x, z, polygon) {
-  // Ray cast in XZ; polygon points are DOMPoint-like in plane space (y≈0).
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i].x;
-    const zi = polygon[i].z;
-    const xj = polygon[j].x;
-    const zj = polygon[j].z;
-    const intersect = ((zi > z) !== (zj > z))
-      && (x < ((xj - xi) * (z - zi)) / ((zj - zi) || 1e-9) + xi);
-    if (intersect) inside = !inside;
-  }
-  return inside;
+function axis(v) {
+  return Math.abs(v) > DEADZONE ? v : 0;
 }
 
 /**
  * @param {{ renderer: THREE.WebGLRenderer, scene: THREE.Scene, stage: THREE.Group }} opts
  */
 export function createArPlacement({ renderer, scene, stage }) {
-  const reticle = new THREE.Mesh(
-    new THREE.RingGeometry(0.08, 0.11, 32).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({
-      color: 0x39d98a,
-      transparent: true,
-      opacity: 0.9,
-      side: THREE.DoubleSide,
-      depthWrite: false
-    })
-  );
-  reticle.visible = false;
-  reticle.renderOrder = 20;
-  scene.add(reticle);
-
   const hint = new THREE.Sprite(
     new THREE.SpriteMaterial({
-      map: makeHintTexture('AIM AT TABLE · TRIGGER TO PLACE'),
+      map: makeHintTexture('L MOVE · R TURN/HEIGHT · GRIP SIZE · TRIGGER LOCK'),
       transparent: true,
       depthTest: false
     })
   );
-  hint.scale.set(0.55, 0.08, 1);
+  hint.scale.set(0.72, 0.09, 1);
   hint.visible = false;
   hint.renderOrder = 21;
   scene.add(hint);
 
   let active = false;
   let placed = false;
-  let hitTestSource = null;
-  let hitTestRequested = false;
-  let roomCaptureTried = false;
-  let sessionStartedAt = 0;
-  let lastHit = null;
-  const _origin = new THREE.Vector3();
-  const _dir = new THREE.Vector3();
-  const _mat = new THREE.Matrix4();
-  const _pos = new THREE.Vector3();
-  const _quat = new THREE.Quaternion();
-  const _scale = new THREE.Vector3();
-  const _euler = new THREE.Euler();
+  let stageScale = 1;
+  let defaultHeight = 0.75;
+  const _fwd = new THREE.Vector3();
+  const _right = new THREE.Vector3();
+  const _camPos = new THREE.Vector3();
+
+  function applyScale() {
+    stage.scale.setScalar(stageScale);
+  }
+
+  function setDefaultHeight(m) {
+    const next = Math.max(0.35, Math.min(1.45, Number(m) || 0.75));
+    const prev = defaultHeight;
+    defaultHeight = next;
+    // Keep the table's relative offset when the setting changes mid-session.
+    if (active) stage.position.y += next - prev;
+  }
 
   function resetStageHome() {
-    stage.position.set(0, 0, 0);
+    stage.position.set(0, defaultHeight, 0);
     stage.rotation.set(0, 0, 0);
+    stageScale = 1;
+    applyScale();
     stage.visible = true;
+  }
+
+  function spawnInFront() {
+    const cam = renderer.xr.getCamera();
+    cam.getWorldPosition(_camPos);
+    cam.getWorldDirection(_fwd);
+    _fwd.y = 0;
+    if (_fwd.lengthSq() < 1e-6) _fwd.set(0, 0, -1);
+    else _fwd.normalize();
+    stage.position.set(
+      _camPos.x + _fwd.x * 1.05,
+      defaultHeight,
+      _camPos.z + _fwd.z * 1.05
+    );
+    stage.rotation.set(0, Math.atan2(_fwd.x, _fwd.z), 0);
+    stageScale = 1;
+    applyScale();
+    stage.visible = true;
+  }
+
+  function setHint(text) {
+    const map = makeHintTexture(text);
+    if (hint.material.map) hint.material.map.dispose();
+    hint.material.map = map;
+    hint.material.needsUpdate = true;
   }
 
   function begin() {
     active = true;
     placed = false;
-    hitTestSource = null;
-    hitTestRequested = false;
-    roomCaptureTried = false;
-    sessionStartedAt = performance.now();
-    lastHit = null;
-    reticle.visible = false;
+    spawnInFront();
+    setHint('L MOVE · R TURN/HEIGHT · GRIP SIZE · TRIGGER LOCK');
     hint.visible = true;
-    // Preview follows reticle; start slightly in front until first hit.
-    stage.visible = true;
-    stage.position.set(0, 0, -0.9);
-    stage.rotation.set(0, 0, 0);
   }
 
   function end() {
     active = false;
     placed = false;
-    hitTestSource = null;
-    hitTestRequested = false;
-    reticle.visible = false;
     hint.visible = false;
-    lastHit = null;
     resetStageHome();
   }
 
   function unlock() {
     if (!active) return;
     placed = false;
-    reticle.visible = !!lastHit;
+    setHint('L MOVE · R TURN/HEIGHT · GRIP SIZE · TRIGGER LOCK');
     hint.visible = true;
-    hint.material.map = makeHintTexture('AIM AT TABLE · TRIGGER TO PLACE');
-    hint.material.map.needsUpdate = true;
   }
 
   function isPlacing() {
@@ -154,128 +122,76 @@ export function createArPlacement({ renderer, scene, stage }) {
     return !active || placed;
   }
 
-  function ensureHitTest(session) {
-    if (hitTestRequested || !session || !session.requestHitTestSource) return;
-    hitTestRequested = true;
-    session.requestReferenceSpace('viewer').then((viewerSpace) => {
-      session.requestHitTestSource({ space: viewerSpace }).then((source) => {
-        hitTestSource = source;
-      }).catch(() => {
-        hitTestSource = null;
-      });
-    }).catch(() => {
-      hitTestSource = null;
-    });
-    session.addEventListener('end', () => {
-      hitTestSource = null;
-      hitTestRequested = false;
-    });
-  }
-
-  function maybeRoomCapture(session, frame) {
-    if (roomCaptureTried || !session) return;
-    const elapsed = performance.now() - sessionStartedAt;
-    if (elapsed < 2500) return;
-    const planes = frame?.detectedPlanes;
-    const hasPlanes = planes && planes.size > 0;
-    if (hasPlanes) return;
-    roomCaptureTried = true;
-    if (typeof session.initiateRoomCapture === 'function') {
-      session.initiateRoomCapture().catch(() => {});
-    }
-  }
-
-  function applyPose(position, quaternion) {
-    // Table surface is local y=0 on the stage; sit that on the hit plane.
-    stage.position.copy(position);
-    if (quaternion) {
-      _euler.setFromQuaternion(quaternion, 'YXZ');
-      stage.rotation.set(0, _euler.y, 0);
-    }
-  }
-
-  function tick(frame) {
-    if (!active || placed) {
-      reticle.visible = false;
+  function tick(dt) {
+    if (!active) {
       hint.visible = false;
       return;
     }
-    if (!frame) return;
 
+    hint.position.copy(stage.position);
+    hint.position.y += 0.28 * stageScale;
+
+    if (placed) {
+      hint.visible = false;
+      return;
+    }
+
+    hint.visible = true;
     const session = renderer.xr.getSession();
-    const referenceSpace = renderer.xr.getReferenceSpace();
-    if (!session || !referenceSpace) return;
+    if (!session) return;
 
-    ensureHitTest(session);
-    maybeRoomCapture(session, frame);
+    let movePad = { x: 0, y: 0 };
+    let lookPad = { x: 0, y: 0 };
+    let grow = 0;
+    let shrink = 0;
 
-    lastHit = null;
-
-    // 1) Preferred: WebXR hit-test results
-    if (hitTestSource) {
-      const results = frame.getHitTestResults(hitTestSource);
-      if (results.length) {
-        const pose = results[0].getPose(referenceSpace);
-        if (pose) {
-          _mat.fromArray(pose.transform.matrix);
-          _mat.decompose(_pos, _quat, _scale);
-          // Prefer roughly horizontal hits (table / floor).
-          const up = new THREE.Vector3(0, 1, 0).applyQuaternion(_quat);
-          if (up.y > 0.55) {
-            lastHit = { position: _pos.clone(), quaternion: _quat.clone() };
-          }
-        }
-      }
+    for (const src of session.inputSources) {
+      if (!src.gamepad) continue;
+      const axes = readAxes(src.gamepad);
+      if (src.handedness === 'left') movePad = axes;
+      if (src.handedness === 'right') lookPad = axes;
+      const squeeze = src.gamepad.buttons?.[1];
+      const v = squeeze ? (squeeze.value || (squeeze.pressed ? 1 : 0)) : 0;
+      if (src.handedness === 'right') grow = Math.max(grow, v);
+      if (src.handedness === 'left') shrink = Math.max(shrink, v);
     }
 
-    // 2) Fallback: ray from right/left controller against detected planes
-    if (!lastHit && frame.detectedPlanes) {
-      for (const src of session.inputSources) {
-        if (!src.targetRaySpace) continue;
-        const pose = frame.getPose(src.targetRaySpace, referenceSpace);
-        if (!pose) continue;
-        _mat.fromArray(pose.transform.matrix);
-        _origin.setFromMatrixPosition(_mat);
-        _dir.set(0, 0, -1).transformDirection(_mat);
-        const hit = hitTestPlanes(frame, _origin, _dir, referenceSpace);
-        if (hit && (!lastHit || hit.distance < lastHit.distance)) {
-          lastHit = {
-            position: hit.point.clone(),
-            quaternion: new THREE.Quaternion().setFromUnitVectors(
-              new THREE.Vector3(0, 1, 0),
-              hit.normal
-            ),
-            distance: hit.distance
-          };
-        }
-      }
+    const cam = renderer.xr.getCamera();
+    cam.getWorldDirection(_fwd);
+    _fwd.y = 0;
+    if (_fwd.lengthSq() < 1e-6) _fwd.set(0, 0, -1);
+    else _fwd.normalize();
+    _right.crossVectors(_fwd, new THREE.Vector3(0, 1, 0)).normalize();
+
+    const mx = axis(movePad.x);
+    const my = axis(movePad.y);
+    if (mx || my) {
+      // Stick forward = push table away (same sense as walk stick).
+      stage.position.addScaledVector(_fwd, -my * MOVE_SPEED * dt);
+      stage.position.addScaledVector(_right, mx * MOVE_SPEED * dt);
     }
 
-    if (lastHit) {
-      reticle.visible = true;
-      reticle.position.copy(lastHit.position);
-      reticle.position.y += 0.002;
-      applyPose(lastHit.position, lastHit.quaternion);
-      stage.visible = true;
-      hint.position.copy(lastHit.position);
-      hint.position.y += 0.18;
-      hint.visible = true;
-    } else {
-      reticle.visible = false;
-      hint.visible = true;
-      const cam = renderer.xr.getCamera();
-      cam.getWorldPosition(_origin);
-      cam.getWorldDirection(_dir);
-      hint.position.copy(_origin).addScaledVector(_dir, 1.1);
-      hint.position.y += 0.05;
+    const yaw = axis(lookPad.x);
+    const hy = axis(lookPad.y);
+    if (yaw) stage.rotation.y -= yaw * YAW_SPEED * dt;
+    if (hy) {
+      stage.position.y = THREE.MathUtils.clamp(
+        stage.position.y - hy * HEIGHT_SPEED * dt,
+        Math.max(0.35, defaultHeight - 0.45),
+        Math.min(1.45, defaultHeight + 0.45)
+      );
     }
+
+    // Right grip = bigger, left grip = smaller
+    if (grow > 0.08) stageScale += grow * SCALE_SPEED * dt;
+    if (shrink > 0.08) stageScale -= shrink * SCALE_SPEED * dt;
+    stageScale = THREE.MathUtils.clamp(stageScale, SCALE_MIN, SCALE_MAX);
+    applyScale();
   }
 
   function tryPlace() {
-    if (!active || placed || !lastHit) return false;
-    applyPose(lastHit.position, lastHit.quaternion);
+    if (!active || placed) return false;
     placed = true;
-    reticle.visible = false;
     hint.visible = false;
     return true;
   }
@@ -288,21 +204,22 @@ export function createArPlacement({ renderer, scene, stage }) {
     tryPlace,
     isPlacing,
     isPlaced,
-    resetStageHome
+    resetStageHome,
+    setDefaultHeight
   };
 }
 
 function makeHintTexture(text) {
   const c = document.createElement('canvas');
-  c.width = 1024;
+  c.width = 1280;
   c.height = 128;
   const ctx = c.getContext('2d');
   ctx.clearRect(0, 0, c.width, c.height);
-  ctx.fillStyle = 'rgba(8, 12, 18, 0.72)';
+  ctx.fillStyle = 'rgba(8, 12, 18, 0.75)';
   roundRect(ctx, 16, 16, c.width - 32, c.height - 32, 18);
   ctx.fill();
   ctx.fillStyle = '#9dffc4';
-  ctx.font = "bold 44px Consolas, 'Courier New', monospace";
+  ctx.font = "bold 40px Consolas, 'Courier New', monospace";
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, c.width / 2, c.height / 2 + 2);

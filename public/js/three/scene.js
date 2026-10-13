@@ -16,9 +16,9 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Device } from './device.js';
 import { createFly } from './fly.js';
 import { createDeskFan } from './fan.js';
-import { attachXR } from './xr.js?v=20261007b';
-import { createPauseMenu } from './pauseMenu.js?v=20261007b';
-import { createArPlacement } from './arPlacement.js?v=20261007b';
+import { attachXR } from './xr.js?v=20261013a';
+import { createPauseMenu } from './pauseMenu.js?v=20261013a';
+import { createArPlacement } from './arPlacement.js?v=20261013a';
 
 export function createDeviceScene(container, initialQuality = 'medium') {
   /* ---------- renderer (XR-compatible; alpha for AR passthrough) ---------- */
@@ -252,6 +252,17 @@ export function createDeviceScene(container, initialQuality = 'medium') {
   let systemLeave = null; // 'mainMenu' | null
   let flyEnabled = false;
   let xrMode = null; // 'vr' | 'ar' | null
+  let tableHeight = 0.75;
+
+  function applyTableHeight() {
+    arPlace.setDefaultHeight(tableHeight);
+    if (!renderer.xr.isPresenting) {
+      stage.position.y = 0;
+      return;
+    }
+    // VR: fixed table height from settings. AR placement owns Y while active.
+    if (xrMode === 'vr') stage.position.y = tableHeight;
+  }
 
   function applyPassthroughVisuals(on) {
     if (on) {
@@ -409,7 +420,7 @@ export function createDeviceScene(container, initialQuality = 'medium') {
       if (arPlace.isPlacing()) arPlace.tryPlace();
     },
     onMenuButton: openPauseMenu,
-    isMenuOpen: () => pauseMenu.open,
+    isMenuOpen: () => pauseMenu.open || arPlace.isPlacing(),
     onSessionStart: (mode) => {
       xrMode = mode === 'ar' ? 'ar' : 'vr';
       qualityBeforeVR = currentQuality;
@@ -419,14 +430,17 @@ export function createDeviceScene(container, initialQuality = 'medium') {
       camera.position.set(0, 0, 0);
       dolly.rotation.set(0, 0, 0);
       if (xrMode === 'ar') {
-        // Stay at tracking origin; bomb snaps onto a real plane.
         dolly.position.set(0, 0, 0);
+        arPlace.setDefaultHeight(tableHeight);
         arPlace.begin();
         pauseMenu.setRepositionVisible(true);
       } else {
         dolly.position.set(0, 0, 1.35);
         arPlace.end();
         pauseMenu.setRepositionVisible(false);
+        stage.position.set(0, tableHeight, 0);
+        stage.rotation.set(0, 0, 0);
+        stage.scale.setScalar(1);
       }
       document.body.classList.add('xr-presenting');
       document.body.classList.toggle('xr-ar-presenting', xrMode === 'ar');
@@ -440,6 +454,9 @@ export function createDeviceScene(container, initialQuality = 'medium') {
       pauseMenu.group.scale.setScalar(1);
       pauseMenu.setRepositionVisible(false);
       arPlace.end();
+      stage.position.set(0, 0, 0);
+      stage.rotation.set(0, 0, 0);
+      stage.scale.setScalar(1);
       if (systemLeave !== 'mainMenu') {
         api.onSystemMenu?.('resume');
       }
@@ -480,7 +497,7 @@ export function createDeviceScene(container, initialQuality = 'medium') {
     if (!presenting) controls.update();
     xr.tick(dt);
     if (presenting && xrMode === 'ar') {
-      arPlace.tick(frame || renderer.xr.getFrame());
+      arPlace.tick(dt);
     }
     if (pauseMenu.open) placePauseMenu();
     if (device) device.tick(dt, t);
@@ -585,6 +602,11 @@ export function createDeviceScene(container, initialQuality = 'medium') {
         api.onFlyAudio?.({ alive: false });
         api.onFanChange?.(false);
       }
+    },
+    setTableHeight(m) {
+      const next = Math.max(0.35, Math.min(1.45, Number(m) || 0.75));
+      tableHeight = next;
+      applyTableHeight();
     },
     updateModule(id, view) { if (device) device.updateModule(id, view); },
     markSolved(id) {

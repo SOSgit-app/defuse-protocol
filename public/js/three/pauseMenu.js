@@ -142,12 +142,12 @@ export function createPauseMenu({ onResume, onMainMenu, onReposition, getSetting
   pausePage.add(pauseHint);
 
   const settingsBezel = new THREE.Mesh(
-    new RoundedBoxGeometry(0.3, 0.26, 0.012, 3, 0.008),
+    new RoundedBoxGeometry(0.3, 0.30, 0.012, 3, 0.008),
     new THREE.MeshBasicMaterial({ color: 0x0b0e14 })
   );
   settingsPage.add(settingsBezel);
   const settingsBack = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.315, 0.275),
+    new THREE.PlaneGeometry(0.315, 0.315),
     new THREE.MeshBasicMaterial({ color: 0x0b0e14, side: THREE.DoubleSide })
   );
   settingsBack.position.z = -0.011;
@@ -220,8 +220,27 @@ export function createPauseMenu({ onResume, onMainMenu, onReposition, getSetting
     rows.push({ key: diff.key, timeVal, strikeVal });
   });
 
+  const tableVal = makeValue(0.055, 0.024);
+  tableVal.mesh.position.set(0.02, -0.055, 0.014);
+  settingsPage.add(tableVal.mesh);
+
+  const tableName = makeFace(0.07, 0.024, 200, 64, (ctx, w, h) => {
+    ctx.fillStyle = '#161a22';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#cfd6e4';
+    ctx.font = `bold ${Math.floor(h * 0.45)}px 'Consolas', monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('TABLE', w / 2, h / 2 + 2);
+  });
+  tableName.position.set(-0.11, -0.055, 0.014);
+  settingsPage.add(tableName);
+
+  addStep('◀', 0.028, 0.024, '#cfd6e4', '#12151b', () => nudgeTable(-1), -0.05, -0.055);
+  addStep('▶', 0.028, 0.024, '#cfd6e4', '#12151b', () => nudgeTable(1), 0.062, -0.055);
+
   const flyVal = makeValue(0.05, 0.024);
-  flyVal.mesh.position.set(0.02, -0.068, 0.014);
+  flyVal.mesh.position.set(0.02, -0.088, 0.014);
   settingsPage.add(flyVal.mesh);
 
   const flyName = makeFace(0.06, 0.024, 160, 64, (ctx, w, h) => {
@@ -233,20 +252,20 @@ export function createPauseMenu({ onResume, onMainMenu, onReposition, getSetting
     ctx.textBaseline = 'middle';
     ctx.fillText('FLY', w / 2, h / 2 + 2);
   });
-  flyName.position.set(-0.11, -0.068, 0.014);
+  flyName.position.set(-0.11, -0.088, 0.014);
   settingsPage.add(flyName);
 
-  addStep('◀', 0.028, 0.024, '#cfd6e4', '#12151b', () => nudgeFly(-1), -0.05, -0.068);
-  addStep('▶', 0.028, 0.024, '#cfd6e4', '#12151b', () => nudgeFly(1), 0.062, -0.068);
+  addStep('◀', 0.028, 0.024, '#cfd6e4', '#12151b', () => nudgeFly(-1), -0.05, -0.088);
+  addStep('▶', 0.028, 0.024, '#cfd6e4', '#12151b', () => nudgeFly(1), 0.062, -0.088);
 
   const backBtn = makeButton('BACK', 0.12, 0.028, '#cfd6e4', '#12151b');
-  backBtn.position.set(-0.07, -0.105, 0.014);
+  backBtn.position.set(-0.07, -0.125, 0.014);
   backBtn.userData.onClick = () => setPage('pause');
   settingsPage.add(backBtn);
   settingsTargets.push(backBtn);
 
   const settingsResume = makeButton('RESUME', 0.12, 0.028, '#2f8a4a', '#f2f6f3');
-  settingsResume.position.set(0.07, -0.105, 0.014);
+  settingsResume.position.set(0.07, -0.125, 0.014);
   settingsResume.userData.onClick = () => onResume && onResume();
   settingsPage.add(settingsResume);
   settingsTargets.push(settingsResume);
@@ -285,8 +304,10 @@ export function createPauseMenu({ onResume, onMainMenu, onReposition, getSetting
       times: { easy: 8 * 60 * 1000, normal: 10 * 60 * 1000, hard: 12 * 60 * 1000, ...s.times },
       strikes: { easy: 3, normal: 3, hard: 2, ...s.strikes },
       fly: !!s.fly,
+      tableHeight: Number.isFinite(s.tableHeight) ? s.tableHeight : 0.75,
       timeOptions: s.timeOptions || [60 * 1000, 8 * 60 * 1000, 10 * 60 * 1000, 12 * 60 * 1000],
-      strikeOptions: s.strikeOptions || [1, 2, 3, 4, 5, 6, 7, 8, 9]
+      strikeOptions: s.strikeOptions || [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      tableHeightOptions: s.tableHeightOptions || [0.55, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 1.00, 1.10]
     };
   }
 
@@ -296,6 +317,7 @@ export function createPauseMenu({ onResume, onMainMenu, onReposition, getSetting
       row.timeVal.set(fmtTime(s.times[row.key]));
       row.strikeVal.set(String(s.strikes[row.key]));
     }
+    tableVal.set(`${Math.round(s.tableHeight * 100)}cm`);
     flyVal.set(s.fly ? 'YES' : 'NO');
   }
 
@@ -314,6 +336,12 @@ export function createPauseMenu({ onResume, onMainMenu, onReposition, getSetting
   function nudgeFly(dir) {
     const s = readSettings();
     s.fly = dir > 0;
+    commit(s);
+  }
+
+  function nudgeTable(dir) {
+    const s = readSettings();
+    s.tableHeight = stepList(s.tableHeightOptions, s.tableHeight, dir);
     commit(s);
   }
 
