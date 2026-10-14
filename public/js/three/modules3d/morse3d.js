@@ -5,6 +5,8 @@ import { CanvasTex, displayMaterial, drawReadout, drawLabel, labelMaterial } fro
 import { sound } from '../../sound.js';
 
 const UNIT = 0.22; // seconds per morse unit
+const LETTER_GAP = UNIT * 10; // long silence between letters (~2.2s) so boundaries are obvious
+const WORD_GAP = UNIT * 16; // even longer pause before the word loops
 const START_DELAY = 5; // stay dark after the round begins
 const RST_DELAY = 3; // pause after RST before the word restarts
 const RST_FLASH = 0.45; // green confirm flash length
@@ -16,9 +18,9 @@ function buildTimeline(pattern) {
       events.push({ on: true, dur: sym === '.' ? UNIT : UNIT * 3 });
       events.push({ on: false, dur: UNIT });
     }
-    events.push({ on: false, dur: UNIT * 3 });
+    events.push({ on: false, dur: LETTER_GAP });
   }
-  events.push({ on: false, dur: UNIT * 7 });
+  events.push({ on: false, dur: WORD_GAP });
   let t = 0;
   return events.map((e) => ({ ...e, start: t, end: (t += e.dur) }));
 }

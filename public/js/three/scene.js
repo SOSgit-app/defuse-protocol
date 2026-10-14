@@ -13,12 +13,12 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
 import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { Device } from './device.js';
+import { Device } from './device.js?v=20261014b';
 import { createFly } from './fly.js';
 import { createDeskFan } from './fan.js';
-import { attachXR } from './xr.js?v=20261013a';
-import { createPauseMenu } from './pauseMenu.js?v=20261013a';
-import { createArPlacement } from './arPlacement.js?v=20261013a';
+import { attachXR } from './xr.js?v=20261014b';
+import { createPauseMenu } from './pauseMenu.js?v=20261014b';
+import { createArPlacement } from './arPlacement.js?v=20261014b';
 
 export function createDeviceScene(container, initialQuality = 'medium') {
   /* ---------- renderer (XR-compatible; alpha for AR passthrough) ---------- */
@@ -302,6 +302,10 @@ export function createDeviceScene(container, initialQuality = 'medium') {
     onReposition: () => {
       arPlace.unlock();
       closePauseMenu();
+    },
+    onTableHeightLive: () => {
+      // Keep the pause panel open, but let the bomb timer keep running.
+      api.onSystemMenu?.('resume');
     },
     getSettings: () => api.getVrSettings?.(),
     setSettings: (next) => api.onVrSettings?.(next)
@@ -604,7 +608,7 @@ export function createDeviceScene(container, initialQuality = 'medium') {
       }
     },
     setTableHeight(m) {
-      const next = Math.max(0.35, Math.min(1.45, Number(m) || 0.75));
+      const next = Math.max(0.12, Math.min(1.55, Number(m) || 0.75));
       tableHeight = next;
       applyTableHeight();
     },

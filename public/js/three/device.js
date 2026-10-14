@@ -5,7 +5,7 @@
  */
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { moduleBuilders } from './modules3d/index.js';
+import { moduleBuilders } from './modules3d/index.js?v=20261014b';
 import { CanvasTex, displayMaterial, labelMaterial, drawReadout, drawLabel } from './textUtil.js';
 
 const CASE_W = 1.14, CASE_H = 0.16, CASE_D = 0.8;

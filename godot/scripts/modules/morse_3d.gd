@@ -206,9 +206,10 @@ func _build_timeline(pattern: Array) -> Array:
 			t += dur
 			events.append({"start": t, "end": t + unit, "on": false})
 			t += unit
-		t += unit * 2.0
-	t += unit * 7.0
-	events.append({"start": t - unit * 7.0, "end": t, "on": false})
+		# Long letter gap (~2.2s) so letter boundaries are obvious; word loop longer still
+		t += unit * 10.0
+	t += unit * 16.0
+	events.append({"start": t - unit * 16.0, "end": t, "on": false})
 	return events
 
 

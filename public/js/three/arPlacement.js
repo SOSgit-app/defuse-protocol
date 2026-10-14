@@ -1,5 +1,6 @@
 /**
- * AR manual placement — smooth move / height / turn / scale with sticks.
+ * AR manual placement — sticks + two-handed grip grab (hold both grips to
+ * move / turn / resize the table like you're holding it).
  * Trigger locks the stage until MOVE BOMB unlocks it again.
  */
 import * as THREE from 'three';
@@ -11,6 +12,11 @@ const SCALE_SPEED = 0.9;
 const DEADZONE = 0.18;
 const SCALE_MIN = 0.55;
 const SCALE_MAX = 1.65;
+const HEIGHT_MIN = 0.12;
+const HEIGHT_MAX = 1.55;
+const GRIP_HOLD = 0.55; // both grips above this = two-hand grab
+const HINT_IDLE = 'BOTH GRIPS HOLD · L MOVE · R TURN/HEIGHT · TRIGGER LOCK';
+const HINT_HOLD = 'HOLDING — MOVE HANDS TO PLACE / SPREAD TO RESIZE';
 
 function readAxes(gamepad) {
   if (!gamepad || !gamepad.axes) return { x: 0, y: 0 };
@@ -23,18 +29,24 @@ function axis(v) {
   return Math.abs(v) > DEADZONE ? v : 0;
 }
 
+function squeezeValue(src) {
+  const b = src.gamepad?.buttons?.[1];
+  if (!b) return 0;
+  return b.value || (b.pressed ? 1 : 0);
+}
+
 /**
  * @param {{ renderer: THREE.WebGLRenderer, scene: THREE.Scene, stage: THREE.Group }} opts
  */
 export function createArPlacement({ renderer, scene, stage }) {
   const hint = new THREE.Sprite(
     new THREE.SpriteMaterial({
-      map: makeHintTexture('L MOVE · R TURN/HEIGHT · GRIP SIZE · TRIGGER LOCK'),
+      map: makeHintTexture(HINT_IDLE),
       transparent: true,
       depthTest: false
     })
   );
-  hint.scale.set(0.72, 0.09, 1);
+  hint.scale.set(0.78, 0.09, 1);
   hint.visible = false;
   hint.renderOrder = 21;
   scene.add(hint);
@@ -43,16 +55,41 @@ export function createArPlacement({ renderer, scene, stage }) {
   let placed = false;
   let stageScale = 1;
   let defaultHeight = 0.75;
+  let yawOffset = 0;
+  /** @type {null | {
+   *   mid: THREE.Vector3, dist: number, yaw: number,
+   *   stagePos: THREE.Vector3, stageScale: number, stageYaw: number
+   * }} */
+  let dualHold = null;
+
   const _fwd = new THREE.Vector3();
   const _right = new THREE.Vector3();
   const _camPos = new THREE.Vector3();
+  const _toCam = new THREE.Vector3();
+  const _leftPos = new THREE.Vector3();
+  const _rightPos = new THREE.Vector3();
+  const _mid = new THREE.Vector3();
+  const _delta = new THREE.Vector3();
 
   function applyScale() {
     stage.scale.setScalar(stageScale);
   }
 
+  /** Bomb serial / front is +Z — yaw so that face points at the player. */
+  function facePlayerYaw() {
+    const cam = renderer.xr.getCamera();
+    cam.getWorldPosition(_camPos);
+    _toCam.set(_camPos.x - stage.position.x, 0, _camPos.z - stage.position.z);
+    if (_toCam.lengthSq() < 1e-6) return stage.rotation.y;
+    return Math.atan2(_toCam.x, _toCam.z);
+  }
+
+  function applyFacing() {
+    stage.rotation.y = facePlayerYaw() + yawOffset;
+  }
+
   function setDefaultHeight(m) {
-    const next = Math.max(0.35, Math.min(1.45, Number(m) || 0.75));
+    const next = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, Number(m) || 0.75));
     const prev = defaultHeight;
     defaultHeight = next;
     // Keep the table's relative offset when the setting changes mid-session.
@@ -63,6 +100,8 @@ export function createArPlacement({ renderer, scene, stage }) {
     stage.position.set(0, defaultHeight, 0);
     stage.rotation.set(0, 0, 0);
     stageScale = 1;
+    yawOffset = 0;
+    dualHold = null;
     applyScale();
     stage.visible = true;
   }
@@ -79,7 +118,8 @@ export function createArPlacement({ renderer, scene, stage }) {
       defaultHeight,
       _camPos.z + _fwd.z * 1.05
     );
-    stage.rotation.set(0, Math.atan2(_fwd.x, _fwd.z), 0);
+    yawOffset = 0;
+    applyFacing();
     stageScale = 1;
     applyScale();
     stage.visible = true;
@@ -95,14 +135,17 @@ export function createArPlacement({ renderer, scene, stage }) {
   function begin() {
     active = true;
     placed = false;
+    yawOffset = 0;
+    dualHold = null;
     spawnInFront();
-    setHint('L MOVE · R TURN/HEIGHT · GRIP SIZE · TRIGGER LOCK');
+    setHint(HINT_IDLE);
     hint.visible = true;
   }
 
   function end() {
     active = false;
     placed = false;
+    dualHold = null;
     hint.visible = false;
     resetStageHome();
   }
@@ -110,7 +153,10 @@ export function createArPlacement({ renderer, scene, stage }) {
   function unlock() {
     if (!active) return;
     placed = false;
-    setHint('L MOVE · R TURN/HEIGHT · GRIP SIZE · TRIGGER LOCK');
+    yawOffset = 0;
+    dualHold = null;
+    applyFacing();
+    setHint(HINT_IDLE);
     hint.visible = true;
   }
 
@@ -120,6 +166,31 @@ export function createArPlacement({ renderer, scene, stage }) {
 
   function isPlaced() {
     return !active || placed;
+  }
+
+  function gripWorldPos(handedness, out) {
+    for (let i = 0; i < 2; i++) {
+      const g = renderer.xr.getControllerGrip(i);
+      const src = g?.userData?.inputSource;
+      if (src && src.handedness === handedness) {
+        g.updateWorldMatrix(true, false);
+        g.getWorldPosition(out);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function handYaw(left, right) {
+    return Math.atan2(right.x - left.x, right.z - left.z);
+  }
+
+  function releaseDualHold() {
+    if (!dualHold) return;
+    // Preserve the orientation the hands left the table in.
+    yawOffset = stage.rotation.y - facePlayerYaw();
+    dualHold = null;
+    setHint(HINT_IDLE);
   }
 
   function tick(dt) {
@@ -133,6 +204,7 @@ export function createArPlacement({ renderer, scene, stage }) {
 
     if (placed) {
       hint.visible = false;
+      dualHold = null;
       return;
     }
 
@@ -144,17 +216,66 @@ export function createArPlacement({ renderer, scene, stage }) {
     let lookPad = { x: 0, y: 0 };
     let grow = 0;
     let shrink = 0;
+    let leftSqueeze = 0;
+    let rightSqueeze = 0;
 
     for (const src of session.inputSources) {
       if (!src.gamepad) continue;
       const axes = readAxes(src.gamepad);
       if (src.handedness === 'left') movePad = axes;
       if (src.handedness === 'right') lookPad = axes;
-      const squeeze = src.gamepad.buttons?.[1];
-      const v = squeeze ? (squeeze.value || (squeeze.pressed ? 1 : 0)) : 0;
-      if (src.handedness === 'right') grow = Math.max(grow, v);
-      if (src.handedness === 'left') shrink = Math.max(shrink, v);
+      const v = squeezeValue(src);
+      if (src.handedness === 'right') {
+        grow = Math.max(grow, v);
+        rightSqueeze = v;
+      }
+      if (src.handedness === 'left') {
+        shrink = Math.max(shrink, v);
+        leftSqueeze = v;
+      }
     }
+
+    const bothGrips =
+      leftSqueeze >= GRIP_HOLD &&
+      rightSqueeze >= GRIP_HOLD &&
+      gripWorldPos('left', _leftPos) &&
+      gripWorldPos('right', _rightPos);
+
+    if (bothGrips) {
+      _mid.addVectors(_leftPos, _rightPos).multiplyScalar(0.5);
+      const dist = Math.max(0.04, _leftPos.distanceTo(_rightPos));
+      const yaw = handYaw(_leftPos, _rightPos);
+
+      if (!dualHold) {
+        dualHold = {
+          mid: _mid.clone(),
+          dist,
+          yaw,
+          stagePos: stage.position.clone(),
+          stageScale,
+          stageYaw: stage.rotation.y
+        };
+        setHint(HINT_HOLD);
+      } else {
+        _delta.subVectors(_mid, dualHold.mid);
+        stage.position.copy(dualHold.stagePos).add(_delta);
+        stage.position.y = THREE.MathUtils.clamp(stage.position.y, HEIGHT_MIN, HEIGHT_MAX);
+
+        const scaleMul = dist / dualHold.dist;
+        stageScale = THREE.MathUtils.clamp(
+          dualHold.stageScale * scaleMul,
+          SCALE_MIN,
+          SCALE_MAX
+        );
+        applyScale();
+
+        // Yaw follows the line between your hands (table turns with the grab).
+        stage.rotation.y = dualHold.stageYaw + (yaw - dualHold.yaw);
+      }
+      return;
+    }
+
+    if (dualHold) releaseDualHold();
 
     const cam = renderer.xr.getCamera();
     cam.getWorldDirection(_fwd);
@@ -166,23 +287,25 @@ export function createArPlacement({ renderer, scene, stage }) {
     const mx = axis(movePad.x);
     const my = axis(movePad.y);
     if (mx || my) {
-      // Stick forward = push table away (same sense as walk stick).
-      stage.position.addScaledVector(_fwd, -my * MOVE_SPEED * dt);
+      stage.position.addScaledVector(_fwd, my * MOVE_SPEED * dt);
       stage.position.addScaledVector(_right, mx * MOVE_SPEED * dt);
     }
 
     const yaw = axis(lookPad.x);
     const hy = axis(lookPad.y);
-    if (yaw) stage.rotation.y -= yaw * YAW_SPEED * dt;
+    if (yaw) yawOffset += yaw * YAW_SPEED * dt;
     if (hy) {
       stage.position.y = THREE.MathUtils.clamp(
-        stage.position.y - hy * HEIGHT_SPEED * dt,
-        Math.max(0.35, defaultHeight - 0.45),
-        Math.min(1.45, defaultHeight + 0.45)
+        stage.position.y + hy * HEIGHT_SPEED * dt,
+        HEIGHT_MIN,
+        HEIGHT_MAX
       );
     }
 
-    // Right grip = bigger, left grip = smaller
+    // Keep the bomb face toward you while placing; R-stick X is a yaw offset.
+    applyFacing();
+
+    // Single-grip fallback: right = bigger, left = smaller
     if (grow > 0.08) stageScale += grow * SCALE_SPEED * dt;
     if (shrink > 0.08) stageScale -= shrink * SCALE_SPEED * dt;
     stageScale = THREE.MathUtils.clamp(stageScale, SCALE_MIN, SCALE_MAX);
@@ -191,6 +314,7 @@ export function createArPlacement({ renderer, scene, stage }) {
 
   function tryPlace() {
     if (!active || placed) return false;
+    if (dualHold) releaseDualHold();
     placed = true;
     hint.visible = false;
     return true;
@@ -219,7 +343,7 @@ function makeHintTexture(text) {
   roundRect(ctx, 16, 16, c.width - 32, c.height - 32, 18);
   ctx.fill();
   ctx.fillStyle = '#9dffc4';
-  ctx.font = "bold 40px Consolas, 'Courier New', monospace";
+  ctx.font = "bold 36px Consolas, 'Courier New', monospace";
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, c.width / 2, c.height / 2 + 2);

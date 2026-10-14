@@ -7,7 +7,7 @@
 import { build as wires } from './wires3d.js';
 import { build as symbols } from './symbols3d.js';
 import { build as memory } from './memory3d.js';
-import { build as morse } from './morse3d.js';
+import { build as morse } from './morse3d.js?v=20261014b';
 import { build as logicgrid } from './logicgrid3d.js';
 import { build as ordnance } from './ordnance3d.js';
 import { build as comms } from './comms3d.js';

@@ -2,8 +2,8 @@
  * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
  * Teammates use manual.html on another device; no multiplayer in-app.
  */
-import { createDeviceScene } from './three/scene.js?v=20261013a';
-import { detectXRSupport } from './three/xr.js?v=20261013a';
+import { createDeviceScene } from './three/scene.js?v=20261014b';
+import { detectXRSupport } from './three/xr.js?v=20261014b';
 import { sound } from './sound.js';
 import { startSoloGame } from './solo/engine.js';
 
@@ -22,7 +22,13 @@ const DEFAULT_STRIKES = { easy: 3, normal: 3, hard: 2 };
 const STRIKE_KEY = 'defuse-protocol.strikes';
 const STRIKE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const DEFAULT_TABLE_HEIGHT = 0.75;
-const TABLE_HEIGHT_OPTIONS = [0.55, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 1.00, 1.10];
+const TABLE_HEIGHT_MIN = 0.15;
+const TABLE_HEIGHT_MAX = 1.40;
+/** Fine steps for in-headset ◀ ▶ (1 cm). */
+const TABLE_HEIGHT_OPTIONS = Array.from(
+  { length: Math.round((TABLE_HEIGHT_MAX - TABLE_HEIGHT_MIN) * 100) + 1 },
+  (_, i) => Math.round((TABLE_HEIGHT_MIN + i * 0.01) * 100) / 100
+);
 const TIME_VER_KEY = 'defuse-protocol.times.v';
 const PREV_STOCK_TIMES = { easy: 6 * 60 * 1000, normal: 5 * 60 * 1000, hard: 8 * 60 * 1000 };
 const TIME_OPTIONS_MS = [
@@ -97,8 +103,11 @@ function loadPrefs() {
 loadPrefs();
 fillTimeSelects();
 fillStrikeSelects();
-fillTableHeightSelect();
+syncTableHeightSlider();
 refreshDifficultyLabels();
+$('input-table-height')?.addEventListener('input', () => {
+  applyTableHeightFromSlider();
+});
 
 $('select-quality').addEventListener('change', () => {
   persistPrefs();
@@ -227,7 +236,7 @@ function refreshDifficultyLabels() {
 function openSettings() {
   fillTimeSelects();
   fillStrikeSelects();
-  fillTableHeightSelect();
+  syncTableHeightSlider();
   $('select-fly').value = loadFly() ? 'yes' : 'no';
   $('settings-overlay').classList.remove('hidden');
 }
@@ -236,12 +245,10 @@ function closeSettings() {
   saveTimes(readTimesFromSelects());
   saveStrikes(readStrikesFromSelects());
   saveFly($('select-fly').value === 'yes');
-  const height = Number($('select-table-height')?.value);
-  saveTableHeight(height);
-  if (state.scene3d) state.scene3d.setTableHeight(loadTableHeight());
+  applyTableHeightFromSlider();
   refreshDifficultyLabels();
   $('settings-overlay').classList.add('hidden');
-  resumeBomb();
+  // Do not pause/resume the bomb here — table height is a live pref, not a pause action.
 }
 
 function pauseBomb() {
@@ -270,9 +277,7 @@ function saveFly(on) {
 function clampTableHeight(m) {
   const n = Number(m);
   if (!Number.isFinite(n)) return DEFAULT_TABLE_HEIGHT;
-  return TABLE_HEIGHT_OPTIONS.reduce((best, opt) =>
-    Math.abs(opt - n) < Math.abs(best - n) ? opt : best
-  );
+  return Math.round(Math.min(TABLE_HEIGHT_MAX, Math.max(TABLE_HEIGHT_MIN, n)) * 100) / 100;
 }
 
 function loadTableHeight() {
@@ -287,14 +292,24 @@ function fmtTableHeight(m) {
   return `${Math.round(clampTableHeight(m) * 100)} cm`;
 }
 
-function fillTableHeightSelect() {
-  const sel = $('select-table-height');
-  if (!sel) return;
-  const cur = loadTableHeight();
-  sel.innerHTML = TABLE_HEIGHT_OPTIONS.map((m) =>
-    `<option value="${m}">${fmtTableHeight(m)}</option>`
-  ).join('');
-  sel.value = String(cur);
+function syncTableHeightSlider() {
+  const input = $('input-table-height');
+  const label = $('table-height-label');
+  if (!input) return;
+  const cm = Math.round(loadTableHeight() * 100);
+  input.value = String(cm);
+  if (label) label.textContent = `${cm} cm`;
+}
+
+function applyTableHeightFromSlider() {
+  const input = $('input-table-height');
+  if (!input) return loadTableHeight();
+  const meters = clampTableHeight(Number(input.value) / 100);
+  saveTableHeight(meters);
+  if (state.scene3d) state.scene3d.setTableHeight(meters);
+  const label = $('table-height-label');
+  if (label) label.textContent = fmtTableHeight(meters);
+  return meters;
 }
 
 function loadStats() {
@@ -415,7 +430,7 @@ function applyVrSettings(next) {
   if (next.tableHeight != null) saveTableHeight(next.tableHeight);
   fillTimeSelects();
   fillStrikeSelects();
-  fillTableHeightSelect();
+  syncTableHeightSlider();
   $('select-fly').value = loadFly() ? 'yes' : 'no';
   refreshDifficultyLabels();
 
@@ -546,7 +561,7 @@ $('btn-settings-reset')?.addEventListener('click', () => {
   saveTableHeight(DEFAULT_TABLE_HEIGHT);
   fillTimeSelects();
   fillStrikeSelects();
-  fillTableHeightSelect();
+  syncTableHeightSlider();
   $('select-fly').value = 'no';
   if (state.scene3d) state.scene3d.setTableHeight(DEFAULT_TABLE_HEIGHT);
   refreshDifficultyLabels();

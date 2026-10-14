@@ -95,11 +95,11 @@
           <select id="select-strikes-hard"></select>
         </label>
       </div>
-      <label class="field field-inline">
-        <span>TABLE HEIGHT (AR / VR)</span>
-        <select id="select-table-height"></select>
+      <label class="field field-range">
+        <span>TABLE HEIGHT (AR / VR) — <b id="table-height-label">75 cm</b></span>
+        <input id="input-table-height" type="range" min="15" max="140" step="1" value="75" />
       </label>
-      <p class="settings-note">Raises or lowers the bomb table in headset mode so it matches a real desk. Applies to both VR and AR.</p>
+      <p class="settings-note">Continuous desk height for VR and AR (15–140 cm). Drag freely — does not pause a run. In AR you can also raise/lower with the right stick while moving the bomb.</p>
       <label class="field field-inline">
         <span>UNINVITED FLY</span>
         <select id="select-fly">
@@ -170,6 +170,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=20261013a"></script>
+  <script type="module" src="js/main.js?v=20261014b"></script>
 </body>
 </html>

@@ -73,7 +73,7 @@ function makeValue(w, h) {
   };
 }
 
-export function createPauseMenu({ onResume, onMainMenu, onReposition, getSettings, setSettings }) {
+export function createPauseMenu({ onResume, onMainMenu, onReposition, onTableHeightLive, getSettings, setSettings }) {
   const group = new THREE.Group();
   group.visible = false;
   group.renderOrder = 40;
@@ -307,7 +307,10 @@ export function createPauseMenu({ onResume, onMainMenu, onReposition, getSetting
       tableHeight: Number.isFinite(s.tableHeight) ? s.tableHeight : 0.75,
       timeOptions: s.timeOptions || [60 * 1000, 8 * 60 * 1000, 10 * 60 * 1000, 12 * 60 * 1000],
       strikeOptions: s.strikeOptions || [1, 2, 3, 4, 5, 6, 7, 8, 9],
-      tableHeightOptions: s.tableHeightOptions || [0.55, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 1.00, 1.10]
+      tableHeightOptions: s.tableHeightOptions || Array.from(
+        { length: 126 },
+        (_, i) => Math.round((0.15 + i * 0.01) * 100) / 100
+      )
     };
   }
 
@@ -343,6 +346,8 @@ export function createPauseMenu({ onResume, onMainMenu, onReposition, getSetting
     const s = readSettings();
     s.tableHeight = stepList(s.tableHeightOptions, s.tableHeight, dir);
     commit(s);
+    // Height tweaks should not freeze the bomb clock.
+    onTableHeightLive && onTableHeightLive();
   }
 
   function setPage(next) {
