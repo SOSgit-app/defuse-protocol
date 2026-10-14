@@ -15,8 +15,8 @@ const SCALE_MAX = 1.65;
 const HEIGHT_MIN = 0.12;
 const HEIGHT_MAX = 1.55;
 const GRIP_HOLD = 0.55; // both grips above this = two-hand grab
-const HINT_IDLE = 'BOTH GRIPS HOLD · L MOVE · R TURN/HEIGHT · TRIGGER LOCK';
-const HINT_HOLD = 'HOLDING — MOVE HANDS TO PLACE / SPREAD TO RESIZE';
+const HINT_IDLE = 'TIMER PAUSED · BOTH GRIPS / STICKS · TRIGGER LOCK';
+const HINT_HOLD = 'HOLDING — MOVE HANDS / SPREAD TO RESIZE · TRIGGER LOCK';
 
 function readAxes(gamepad) {
   if (!gamepad || !gamepad.axes) return { x: 0, y: 0 };

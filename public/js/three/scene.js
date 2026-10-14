@@ -13,12 +13,12 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
 import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { Device } from './device.js?v=20261014b';
+import { Device } from './device.js?v=20261014c';
 import { createFly } from './fly.js';
 import { createDeskFan } from './fan.js';
-import { attachXR } from './xr.js?v=20261014b';
-import { createPauseMenu } from './pauseMenu.js?v=20261014b';
-import { createArPlacement } from './arPlacement.js?v=20261014b';
+import { attachXR } from './xr.js?v=20261014c';
+import { createPauseMenu } from './pauseMenu.js?v=20261014c';
+import { createArPlacement } from './arPlacement.js?v=20261014c';
 
 export function createDeviceScene(container, initialQuality = 'medium') {
   /* ---------- renderer (XR-compatible; alpha for AR passthrough) ---------- */
@@ -301,11 +301,13 @@ export function createDeviceScene(container, initialQuality = 'medium') {
     },
     onReposition: () => {
       arPlace.unlock();
+      // Setup again — keep the clock frozen until they lock the table.
+      api.onSystemMenu?.('pause');
       closePauseMenu();
     },
     onTableHeightLive: () => {
-      // Keep the pause panel open, but let the bomb timer keep running.
-      api.onSystemMenu?.('resume');
+      // Height tweaks should not freeze via the pause menu, but AR setup still owns pause.
+      if (!arPlace.isPlacing()) api.onSystemMenu?.('resume');
     },
     getSettings: () => api.getVrSettings?.(),
     setSettings: (next) => api.onVrSettings?.(next)
@@ -348,8 +350,9 @@ export function createDeviceScene(container, initialQuality = 'medium') {
   }
 
   function closePauseMenu() {
+    const mayResume = !arPlace.isPlacing();
     if (!pauseMenu.open) {
-      api.onSystemMenu?.('resume');
+      if (mayResume) api.onSystemMenu?.('resume');
       return;
     }
     pauseMenu.hide();
@@ -357,7 +360,7 @@ export function createDeviceScene(container, initialQuality = 'medium') {
     hiddenGrip = null;
     if (pauseMenu.group.parent !== scene) scene.add(pauseMenu.group);
     pauseMenu.group.scale.setScalar(1);
-    api.onSystemMenu?.('resume');
+    if (mayResume) api.onSystemMenu?.('resume');
   }
 
   function interactTargets() {
@@ -421,7 +424,10 @@ export function createDeviceScene(container, initialQuality = 'medium') {
       if (obj.userData.onClick) obj.userData.onClick();
     },
     onSelectEmpty: () => {
-      if (arPlace.isPlacing()) arPlace.tryPlace();
+      if (arPlace.isPlacing() && arPlace.tryPlace()) {
+        // Table locked — bomb clock starts / resumes.
+        api.onSystemMenu?.('resume');
+      }
     },
     onMenuButton: openPauseMenu,
     isMenuOpen: () => pauseMenu.open || arPlace.isPlacing(),
@@ -438,6 +444,8 @@ export function createDeviceScene(container, initialQuality = 'medium') {
         arPlace.setDefaultHeight(tableHeight);
         arPlace.begin();
         pauseMenu.setRepositionVisible(true);
+        // Freeze the timer while the player places / sizes the table.
+        api.onSystemMenu?.('pause');
       } else {
         dolly.position.set(0, 0, 1.35);
         arPlace.end();

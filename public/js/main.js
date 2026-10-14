@@ -2,8 +2,8 @@
  * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
  * Teammates use manual.html on another device; no multiplayer in-app.
  */
-import { createDeviceScene } from './three/scene.js?v=20261014b';
-import { detectXRSupport } from './three/xr.js?v=20261014b';
+import { createDeviceScene } from './three/scene.js?v=20261014c';
+import { detectXRSupport } from './three/xr.js?v=20261014c';
 import { sound } from './sound.js';
 import { startSoloGame } from './solo/engine.js';
 
@@ -526,18 +526,22 @@ function startMission({ enterVr = false, xrMode = 'vr', seed } = {}) {
   syncEnterXrButton(false, mode);
   if (enterVr) {
     $('scene-hint').textContent = mode === 'ar'
-      ? 'AR · Aim at a table · Trigger = place bomb · then play · Y = menu (MOVE BOMB)'
+      ? 'AR · Timer paused until you TRIGGER LOCK the table · Y = menu (MOVE BOMB)'
       : 'VR · Trigger = interact · Y = menu · Left stick = move · Right stick = snap turn';
   } else {
     $('scene-hint').textContent =
       'DRAG to orbit · CLICK to interact · ENTER VR / AR when ready · read serial on case front';
   }
 
+  // AR setup: freeze the clock before the headset session even finishes starting.
+  if (enterVr && mode === 'ar') pauseBomb();
+
   if (enterVr) {
     const label = mode === 'ar' ? 'AR' : 'VR';
     scene.enterXR(mode).catch((err) => {
       $('home-error').textContent = err.message;
       alert(`Could not start ${label}:\n${err.message}\n\nUse Meta Quest Browser over HTTPS.`);
+      if (mode === 'ar') resumeBomb();
     });
   }
 }
@@ -583,8 +587,10 @@ $('btn-enter-vr')?.addEventListener('click', async () => {
     if (mode === 'ar' && !state.xrAr) mode = 'vr';
     if (mode === 'vr' && !state.xrVr && state.xrAr) mode = 'ar';
     state.lastXrMode = mode;
+    if (mode === 'ar') pauseBomb();
     await scene.enterXR(mode);
   } catch (err) {
+    if (state.lastXrMode === 'ar') resumeBomb();
     alert(`Could not start headset mode:\n${err.message}`);
   }
 });
