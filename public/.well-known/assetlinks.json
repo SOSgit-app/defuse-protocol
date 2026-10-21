@@ -4,7 +4,9 @@
     "target": {
       "namespace": "android_app",
       "package_name": "com.smallerbytes.defuseprotocol",
-      "sha256_cert_fingerprints": []
+      "sha256_cert_fingerprints": [
+        "EA:7C:0F:86:49:EE:83:0C:33:40:70:2B:EA:51:39:13:C7:2D:56:06:F5:49:F3:D6:84:11:78:17:1C:5E:E4:98"
+      ]
     }
   }
 ]
