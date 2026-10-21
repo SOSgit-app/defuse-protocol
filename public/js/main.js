@@ -2,8 +2,8 @@
  * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
  * Teammates use manual.html on another device; no multiplayer in-app.
  */
-import { createDeviceScene } from './three/scene.js?v=20261014c';
-import { detectXRSupport } from './three/xr.js?v=20261014c';
+import { createDeviceScene } from './three/scene.js?v=20261021a';
+import { detectXRSupport } from './three/xr.js?v=20261021a';
 import { sound } from './sound.js';
 import { startSoloGame } from './solo/engine.js';
 
@@ -375,6 +375,15 @@ detectXRSupport().then(({ supported, vr, ar }) => {
   if (btnAr) {
     btnAr.disabled = !ar;
     if (!ar) btnAr.title = 'Requires Quest Browser passthrough (Quest 3 / 3S / Pro) over HTTPS';
+  }
+
+  // Meta App Lab / immersive WebXR PWA: Digital Goods means we launched from the
+  // packaged app icon — enter VR automatically (Meta's recommended launch UX).
+  // Regular Quest Browser and desktop keep the home screen.
+  const isAppLabPwa = typeof window.getDigitalGoodsService === 'function';
+  if (isAppLabPwa && vr && !state.session) {
+    if (badge) badge.textContent = 'App Lab PWA — starting immersive VR…';
+    startMission({ enterVr: true, xrMode: 'vr' });
   }
 });
 

@@ -7,6 +7,9 @@ DEFUSE PROTOCOL’s Defuser view is **WebXR** in **Meta Quest Browser** over **H
 
 There is no APK required for the browser path.
 
+- **Classroom / many headsets (no Developer Mode):** keep using this Pages URL, or package it for **Meta App Lab** — see [`defusalapplab/README.md`](../defusalapplab/README.md).
+- **Fully offline sideload (Developer Mode + ADB):** optional [`quest-offline/README.md`](../quest-offline/README.md).
+
 ## Quick path (recommended): GitHub Pages
 
 1. Open the Pages URL (after deploy):

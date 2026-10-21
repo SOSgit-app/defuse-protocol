@@ -1,0 +1,33 @@
+{
+  "name": "Defuse Protocol",
+  "short_name": "Defuse",
+  "description": "Solo VR/AR bomb defusal — you defuse in the headset, teammates hold the field manual.",
+  "id": "/defuse-protocol/",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#12161c",
+  "theme_color": "#12161c",
+  "theme_color_dark": "#12161c",
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

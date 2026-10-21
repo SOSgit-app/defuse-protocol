@@ -1,0 +1,15 @@
+node_modules/
+android.keystore
+*.keystore
+*.jks
+app-release-signed.apk
+app-release-bundle.aab
+app-release-unsigned-aligned.apk
+twa-manifest.json
+.bubblewrap/
+build/
+.gradle/
+local.properties
+*.log
+.env
+.env.*
