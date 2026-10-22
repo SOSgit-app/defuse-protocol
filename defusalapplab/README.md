@@ -5,9 +5,17 @@ Meta Quest **Alpha / Store** packaging for Defuse Protocol using Meta’s offici
 Students install from an Alpha invite link — **no Developer Mode**, no SideQuest, no ADB on each headset.  
 The headset needs **Wi‑Fi** to load the live game from GitHub Pages (this is a web wrapper, not a native offline APK).
 
-**App mode:** `horizonOSAppMode` is **`immersive`**. Meta’s 2D panel mode cannot start WebXR
-(`immersive-vr is not supported on this headset`). The installed Alpha app auto-enters VR on
-launch; Quest Browser still uses the on-screen START IN VR / AR buttons.
+**App mode:** `horizonOSAppMode` is **`2D`** (browser-like panel). Meta’s **immersive** mode
+hangs forever on the three-dot loader when WebXR or Digital Asset Links aren’t ready — that
+was the boot failure after 1.0.3.
+
+**Important:** A 2D Bubblewrap/TWA panel often cannot start WebXR. The classroom game that
+“opens a local browser then you click into VR” matches [`quest-offline/`](../quest-offline/)
+(localhost + Quest Browser), not this App Lab wrapper. For true VR on Quest without fighting
+Bubblewrap, use Quest Browser on the live site, or the offline APK.
+
+Also check Meta Developer Dashboard: if it shows a yellow **“Quest headset is not supported”**,
+fix that under Platform / devices before expecting any Quest Alpha build to behave.
 
 This folder is separate from [`quest-offline/`](../quest-offline/) (sideload / Unknown Sources).
 

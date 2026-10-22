@@ -62,8 +62,8 @@ android {
         
             targetSdkVersion 34
         
-        versionCode 5
-        versionName "1.0.3"
+        versionCode 6
+        versionName "1.0.4"
 
         // The name for the application
         resValue "string", "appName", twaManifest.name
@@ -87,9 +87,9 @@ android {
         
 
         
-            // Immersive: WebXR must requestSession on launch (icon tap = activation).
-            // 2D mode cannot start immersive-vr at all ("not supported on this headset").
-            resValue "string", "horizonOSAppMode", 'immersive'
+            // 2D panel (browser-like window). Immersive mode hangs on Meta's loading
+            // spinner when WebXR/DAL/Quest platform support isn't ready.
+            resValue "string", "horizonOSAppMode", '2D'
         
 
         

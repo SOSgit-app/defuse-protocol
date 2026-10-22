@@ -2,8 +2,8 @@
  * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
  * Teammates use manual.html on another device; no multiplayer in-app.
  */
-import { createDeviceScene } from './three/scene.js?v=20261022h';
-import { detectXRSupport } from './three/xr.js?v=20261022h';
+import { createDeviceScene } from './three/scene.js?v=20261022i';
+import { detectXRSupport } from './three/xr.js?v=20261022i';
 import { sound } from './sound.js';
 import { startSoloGame } from './solo/engine.js';
 
@@ -376,9 +376,11 @@ detectXRSupport().then(({ supported, vr, ar }) => {
       badge.textContent = 'WebXR ready — tap START IN VR.';
     } else if (ar) {
       badge.textContent = 'WebXR AR ready — tap START IN AR.';
+    } else if (isInstalledPwa()) {
+      badge.textContent =
+        'Alpha 2D panel — WebXR usually blocked here. For VR: open the same site in Quest Browser, or use the offline APK (local browser).';
     } else if (onQuest) {
-      // 2D Horizon panels sometimes report no XR until you tap — keep buttons usable.
-      badge.textContent = 'Quest panel — tap START IN VR / AR (trigger to click).';
+      badge.textContent = 'Quest Browser — tap START IN VR / AR (trigger to click).';
     } else {
       badge.textContent = 'WebXR not detected here — use START ON SCREEN, or Quest Browser over HTTPS.';
     }
@@ -765,7 +767,8 @@ $('btn-back-home')?.addEventListener('click', () => {
   returnToMenu();
 });
 
-// Immersive Alpha/Store: enter VR immediately after the module loads.
-if (isInstalledPwa()) {
-  void launchInstalledPwaIntoVr();
-}
+// Do NOT auto-enter VR here. Immersive Alpha packages hang on Meta's three-dot
+// loader if requestSession fails; 2D Alpha packages show the home panel instead
+// (same "browser window then click VR" flow as other classroom Quest web games).
+// Keep launchInstalledPwaIntoVr() for a future immersive APK once Meta dashboard
+// shows Quest as supported and Digital Asset Links verify cleanly.
