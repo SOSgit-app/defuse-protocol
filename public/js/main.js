@@ -2,8 +2,8 @@
  * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
  * Teammates use manual.html on another device; no multiplayer in-app.
  */
-import { createDeviceScene } from './three/scene.js?v=20261022b';
-import { detectXRSupport } from './three/xr.js?v=20261022b';
+import { createDeviceScene } from './three/scene.js?v=20261022c';
+import { detectXRSupport } from './three/xr.js?v=20261022c';
 import { sound } from './sound.js';
 import { startSoloGame } from './solo/engine.js';
 
@@ -379,28 +379,9 @@ detectXRSupport().then(({ supported, vr, ar }) => {
 
 });
 
-/**
- * Immersive Horizon PWA (Alpha/Store install): icon tap is the user activation.
- * Call requestSession ASAP — waiting on UI work can expire the gesture and leave
- * a black immersive shell (Meta: horizonOSAppMode immersive waiting for WebXR).
- */
-async function launchInstalledPwaVr() {
-  if (!('getDigitalGoodsService' in window)) return;
-  if (!navigator.xr?.isSessionSupported) return;
-  if (state.session) return;
-  try {
-    const ok = await navigator.xr.isSessionSupported('immersive-vr');
-    if (!ok) return;
-  } catch {
-    return;
-  }
-  const badge = $('xr-status');
-  if (badge) badge.textContent = 'Installed PWA — starting immersive VR…';
-  startMission({ enterVr: true, xrMode: 'vr' });
-}
-
-// Kick off immediately (do not wait for detectXRSupport UI).
-void launchInstalledPwaVr();
+// Alpha / Store installs use horizonOSAppMode "2D" so the home UI appears in a
+// panel. Meta: do NOT auto-requestSession in 2D mode (that black-screens).
+// Player taps START IN VR / AR like in Quest Browser.
 
 function syncEnterXrButton(presenting, mode) {
   const btn = $('btn-enter-vr');

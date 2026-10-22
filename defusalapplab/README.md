@@ -1,9 +1,12 @@
 # Defusal App Lab (`defusalapplab`)
 
-Meta Quest **App Lab** packaging for Defuse Protocol using Meta’s official **Bubblewrap** WebXR PWA path.
+Meta Quest **Alpha / Store** packaging for Defuse Protocol using Meta’s official **Bubblewrap** WebXR PWA path.
 
-Students install from an App Lab link — **no Developer Mode**, no SideQuest, no ADB on each headset.  
-The headset still needs **Wi‑Fi** to load the live game from GitHub Pages.
+Students install from an Alpha invite link — **no Developer Mode**, no SideQuest, no ADB on each headset.  
+The headset needs **Wi‑Fi** to load the live game from GitHub Pages (this is a web wrapper, not a native offline APK).
+
+**App mode:** `horizonOSAppMode` is **`2D`** so the home screen appears in a panel. Players tap **START IN VR / AR**.  
+(`immersive` mode black-screens if WebXR doesn’t start immediately — that was the boot failure.)
 
 This folder is separate from [`quest-offline/`](../quest-offline/) (sideload / Unknown Sources).
 
@@ -76,12 +79,19 @@ bubblewrap fingerprint add <sha256-with-colons>
 
 ```powershell
 npm run update
-npm run build
 ```
 
-Enter keystore passwords when asked. Output:
+**On Windows**, do **not** use `npm run build` (Bubblewrap hits `spawn EINVAL` on Node 20+/24). Use:
+
+```powershell
+npm run build:windows
+```
+
+Enter your keystore password when asked. Output:
 
 `defusalapplab/app-release-signed.apk`
+
+Needs ~5–8 GB free on `C:` and Android Studio’s SDK at `%LOCALAPPDATA%\Android\Sdk`.
 
 ### 6. Upload to App Lab
 
