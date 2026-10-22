@@ -2,8 +2,8 @@
  * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
  * Teammates use manual.html on another device; no multiplayer in-app.
  */
-import { createDeviceScene } from './three/scene.js?v=20261022i';
-import { detectXRSupport } from './three/xr.js?v=20261022i';
+import { createDeviceScene } from './three/scene.js?v=20261022j';
+import { detectXRSupport } from './three/xr.js?v=20261022j';
 import { sound } from './sound.js';
 import { startSoloGame } from './solo/engine.js';
 
@@ -549,7 +549,7 @@ async function startMission({ enterVr = false, xrMode = 'vr', seed } = {}) {
       const raw = err?.message || String(err);
       const looksUnsupported = /not supported/i.test(raw);
       const msg = looksUnsupported
-        ? `${raw} — this Alpha build is still in 2D panel mode. Upload immersive APK 1.0.3+ (WebXR cannot start from a 2D package).`
+        ? `${raw} — WebXR is blocked in this Alpha panel. Use Quest Browser on the live site, or the offline APK (local browser → START IN VR). Do not upload immersive Bubblewrap — it hangs on loading.`
         : `${raw}. If Quest showed a settings toast, allow immersive VR, then try again.`;
       if ($('home-error')) $('home-error').textContent = `${label} blocked: ${msg}`;
       console.error(`[XR] ${label} start failed`, err);
