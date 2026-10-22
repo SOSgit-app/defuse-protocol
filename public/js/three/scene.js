@@ -16,7 +16,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Device } from './device.js?v=20261022a';
 import { createFly } from './fly.js';
 import { createDeskFan } from './fan.js';
-import { attachXR } from './xr.js?v=20261022f';
+import { attachXR } from './xr.js?v=20261022g';
 import { createPauseMenu } from './pauseMenu.js?v=20261022a';
 import { createArPlacement } from './arPlacement.js?v=20261022a';
 

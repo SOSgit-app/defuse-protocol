@@ -2,8 +2,8 @@
  * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
  * Teammates use manual.html on another device; no multiplayer in-app.
  */
-import { createDeviceScene } from './three/scene.js?v=20261022f';
-import { detectXRSupport } from './three/xr.js?v=20261022f';
+import { createDeviceScene } from './three/scene.js?v=20261022g';
+import { detectXRSupport } from './three/xr.js?v=20261022g';
 import { sound } from './sound.js';
 import { startSoloGame } from './solo/engine.js';
 
@@ -350,10 +350,15 @@ function recordStats(summary) {
   loadStats();
 }
 
+function isInstalledPwa() {
+  // Meta Quest: present only inside the packaged Alpha/Store TWA (not Browser tabs).
+  return 'getDigitalGoodsService' in window;
+}
+
 function isQuestOrInstalledPwa() {
   const ua = navigator.userAgent || '';
   return (
-    'getDigitalGoodsService' in window ||
+    isInstalledPwa() ||
     /OculusBrowser|Quest|Mobile VR/i.test(ua)
   );
 }
@@ -399,9 +404,24 @@ detectXRSupport().then(({ supported, vr, ar }) => {
   }
 });
 
-// Alpha / Store installs use horizonOSAppMode "2D" so the home UI appears in a
-// panel. Meta: do NOT auto-requestSession in 2D mode (that black-screens).
-// Player taps START IN VR / AR like in Quest Browser.
+// Alpha / Store immersive installs: icon tap IS the user activation — request
+// WebXR on load (Meta PWA docs). 2D-mode APKs cannot start immersive-vr at all.
+// Quest Browser keeps the on-screen START IN VR / AR buttons.
+
+async function launchInstalledPwaIntoVr() {
+  if (!isInstalledPwa()) return false;
+  if ($('xr-status')) {
+    $('xr-status').textContent = 'Installed Alpha app — entering VR…';
+  }
+  if ($('home-error')) $('home-error').textContent = 'Entering VR…';
+  await startMission({ enterVr: true, xrMode: 'vr' });
+  const ok = !!(state.scene3d && state.scene3d.isXRPresenting());
+  if (!ok && $('home-error') && !$('home-error').textContent) {
+    $('home-error').textContent =
+      'Could not enter VR. Need Alpha APK 1.0.3+ with immersive mode (2D builds block WebXR).';
+  }
+  return ok;
+}
 
 function syncEnterXrButton(presenting, mode) {
   const btn = $('btn-enter-vr');
@@ -503,11 +523,12 @@ async function startMission({ enterVr = false, xrMode = 'vr', seed } = {}) {
       await scene.enterXR(mode);
       sound.unlock();
     } catch (err) {
-      const msg = err?.message || String(err);
-      if ($('home-error')) {
-        $('home-error').textContent =
-          `${label} blocked: ${msg}. If Quest showed a settings toast, open Quick Settings / Permissions, allow immersive VR (or Browser), then press the button again.`;
-      }
+      const raw = err?.message || String(err);
+      const looksUnsupported = /not supported/i.test(raw);
+      const msg = looksUnsupported
+        ? `${raw} — this Alpha build is still in 2D panel mode. Upload immersive APK 1.0.3+ (WebXR cannot start from a 2D package).`
+        : `${raw}. If Quest showed a settings toast, allow immersive VR, then try again.`;
+      if ($('home-error')) $('home-error').textContent = `${label} blocked: ${msg}`;
       console.error(`[XR] ${label} start failed`, err);
       return;
     }
@@ -722,3 +743,8 @@ $('btn-back-home')?.addEventListener('click', () => {
   setSeedField('');
   returnToMenu();
 });
+
+// Immersive Alpha/Store: enter VR immediately after the module loads.
+if (isInstalledPwa()) {
+  void launchInstalledPwaIntoVr();
+}

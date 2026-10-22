@@ -159,10 +159,8 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-                
-                    <category android:name="com.oculus.intent.category.VR" />
-                
-                
+                <!-- Required for horizonOSAppMode immersive -->
+                <category android:name="com.oculus.intent.category.VR" />
             </intent-filter>
 
             <intent-filter android:autoVerify="true">

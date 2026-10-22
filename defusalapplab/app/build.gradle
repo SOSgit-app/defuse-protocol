@@ -62,8 +62,8 @@ android {
         
             targetSdkVersion 34
         
-        versionCode 3
-        versionName "1.0.1"
+        versionCode 5
+        versionName "1.0.3"
 
         // The name for the application
         resValue "string", "appName", twaManifest.name
@@ -87,9 +87,9 @@ android {
         
 
         
-            // This is used by Meta Quest.
-            // 2D panel: show the web home UI. Immersive waits for WebXR and black-screens if it fails.
-            resValue "string", "horizonOSAppMode", '2D'
+            // Immersive: WebXR must requestSession on launch (icon tap = activation).
+            // 2D mode cannot start immersive-vr at all ("not supported on this headset").
+            resValue "string", "horizonOSAppMode", 'immersive'
         
 
         
