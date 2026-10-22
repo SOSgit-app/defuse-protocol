@@ -25,7 +25,8 @@ export function attachXR({
   onSessionStart,
   onSessionEnd,
   onMenuButton,
-  isMenuOpen
+  isMenuOpen,
+  isGrabbing
 }) {
   renderer.xr.enabled = true;
   // Prefer floor-relative tracking so standing height matches the room.
@@ -208,6 +209,8 @@ export function attachXR({
   function tickLocomotion(dt) {
     if (!renderer.xr.isPresenting) return;
     if (isMenuOpen && isMenuOpen()) return;
+    // Don't walk/snap-turn while two-hand grabbing the bomb.
+    if (isGrabbing && isGrabbing()) return;
     snapCooldown = Math.max(0, snapCooldown - dt);
 
     const session = renderer.xr.getSession();
