@@ -31,6 +31,15 @@ export function attachXR({
   // Prefer floor-relative tracking so standing height matches the room.
   renderer.xr.setReferenceSpaceType('local-floor');
 
+  // Warm XR-compatible GL early so enterXR can requestSession on the click gesture
+  // (awaiting makeXRCompatible inside the click handler expires user-activation on Quest).
+  try {
+    const gl = renderer.getContext();
+    if (gl?.makeXRCompatible) void gl.makeXRCompatible();
+  } catch (_) {
+    /* ignore — requestSession will surface a real error if needed */
+  }
+
   const modelFactory = new XRControllerModelFactory();
   const controllers = [];
   const grips = [];
@@ -266,21 +275,11 @@ export function attachXR({
   async function enterXR(mode = 'vr') {
     if (!navigator.xr) throw new Error('WebXR not available in this browser.');
     const sessionMode = mode === 'ar' ? 'immersive-ar' : 'immersive-vr';
-    const ok = await navigator.xr.isSessionSupported(sessionMode);
-    if (!ok) {
-      throw new Error(
-        mode === 'ar'
-          ? 'immersive-ar (passthrough) is not supported on this device/browser.'
-          : 'immersive-vr is not supported on this device.'
-      );
-    }
-
-    // Ensure GL context is XR-compatible before requesting the session.
-    const gl = renderer.getContext();
-    if (gl && gl.makeXRCompatible) await gl.makeXRCompatible();
 
     // Prefer local-floor (Quest PWA / Browser). Avoid requiring bounded-floor —
     // that reference space has caused black-void sessions on Quest Browser.
+    // CRITICAL: call requestSession synchronously from the user gesture — do NOT
+    // await isSessionSupported / makeXRCompatible first (Quest drops activation).
     const sessionInit = mode === 'ar'
       ? {
           requiredFeatures: ['local-floor'],

@@ -2,8 +2,8 @@
  * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
  * Teammates use manual.html on another device; no multiplayer in-app.
  */
-import { createDeviceScene } from './three/scene.js?v=20261022d';
-import { detectXRSupport } from './three/xr.js?v=20261022d';
+import { createDeviceScene } from './three/scene.js?v=20261022f';
+import { detectXRSupport } from './three/xr.js?v=20261022f';
 import { sound } from './sound.js';
 import { startSoloGame } from './solo/engine.js';
 
@@ -389,6 +389,14 @@ detectXRSupport().then(({ supported, vr, ar }) => {
     btnAr.disabled = onQuest ? false : !ar;
     if (!ar && !onQuest) btnAr.title = 'Requires Quest Browser passthrough (Quest 3 / 3S / Pro) over HTTPS';
   }
+  // Warm WebGL + XR on Quest so the first button press can requestSession immediately.
+  if (onQuest) {
+    try {
+      ensureScene();
+    } catch (err) {
+      console.warn('[XR] scene warm-up failed', err);
+    }
+  }
 });
 
 // Alpha / Store installs use horizonOSAppMode "2D" so the home UI appears in a
@@ -474,11 +482,38 @@ function handleSystemMenu(action) {
   }
 }
 
-function startMission({ enterVr = false, xrMode = 'vr', seed } = {}) {
+async function startMission({ enterVr = false, xrMode = 'vr', seed } = {}) {
   persistPrefs();
   state.menuPaused = false;
   closeSettings();
-  $('home-error').textContent = '';
+
+  const mode = xrMode === 'ar' ? 'ar' : 'vr';
+  const label = mode === 'ar' ? 'AR' : 'VR';
+  state.lastEnterVr = !!enterVr;
+  state.lastXrMode = mode;
+
+  // Quest 2D panel: request WebXR FIRST while the trigger/click gesture is still
+  // valid. Building the bomb first expires user-activation → looks like "can't click".
+  // Pre-create the scene on menu load when possible; here we only ensure it exists.
+  const scene = ensureScene();
+  if (enterVr) {
+    if ($('home-error')) $('home-error').textContent = `Starting ${label}…`;
+    try {
+      // enterXR must be the first await — sound.unlock after would be too late anyway.
+      await scene.enterXR(mode);
+      sound.unlock();
+    } catch (err) {
+      const msg = err?.message || String(err);
+      if ($('home-error')) {
+        $('home-error').textContent =
+          `${label} blocked: ${msg}. If Quest showed a settings toast, open Quick Settings / Permissions, allow immersive VR (or Browser), then press the button again.`;
+      }
+      console.error(`[XR] ${label} start failed`, err);
+      return;
+    }
+  } else if ($('home-error')) {
+    $('home-error').textContent = '';
+  }
 
   if (state.session) {
     state.session.destroy();
@@ -486,9 +521,6 @@ function startMission({ enterVr = false, xrMode = 'vr', seed } = {}) {
   }
 
   sound.unlock();
-  const mode = xrMode === 'ar' ? 'ar' : 'vr';
-  state.lastEnterVr = !!enterVr;
-  state.lastXrMode = mode;
   const missionSeed = (() => {
     const raw = seed !== undefined ? seed : getSeed();
     return String(raw || '').trim() || undefined;
@@ -532,7 +564,6 @@ function startMission({ enterVr = false, xrMode = 'vr', seed } = {}) {
   updateStrikes(session.payload.strikes, session.payload.maxStrikes);
   updateTimer(session.payload.timeMs);
 
-  const scene = ensureScene();
   scene.startGame(session.payload, (moduleId, action) => {
     sound.click();
     session.handleAction(moduleId, action);
@@ -540,32 +571,16 @@ function startMission({ enterVr = false, xrMode = 'vr', seed } = {}) {
   updateSolved(0, session.payload.modules.length);
 
   show('game');
-  syncEnterXrButton(false, mode);
+  syncEnterXrButton(!!enterVr, mode);
   if (enterVr) {
     $('scene-hint').textContent = mode === 'ar'
       ? 'AR · Timer paused until you TRIGGER LOCK the table · Y = menu (MOVE BOMB)'
       : 'VR · Trigger = interact · Y = menu · Left stick = move · Right stick = snap turn';
+    if (mode === 'ar') pauseBomb();
+    if ($('home-error')) $('home-error').textContent = '';
   } else {
     $('scene-hint').textContent =
       'DRAG to orbit · CLICK to interact · ENTER VR / AR when ready · read serial on case front';
-  }
-
-  // AR setup: freeze the clock before the headset session even finishes starting.
-  if (enterVr && mode === 'ar') pauseBomb();
-
-  if (enterVr) {
-    const label = mode === 'ar' ? 'AR' : 'VR';
-    scene.enterXR(mode).catch((err) => {
-      const msg = err?.message || String(err);
-      if ($('home-error')) $('home-error').textContent = msg;
-      if ($('scene-hint')) {
-        $('scene-hint').textContent =
-          `${label} failed: ${msg} — open in Quest Browser or tap ENTER VR`;
-      }
-      // Alerts often don't show inside immersive PWA shells.
-      console.error(`[XR] ${label} start failed`, err);
-      if (mode === 'ar') resumeBomb();
-    });
   }
 }
 
@@ -579,28 +594,21 @@ function flashStrike() {
 function bindActivate(el, fn) {
   if (!el) return;
   let last = 0;
-  const run = (e) => {
+  const run = () => {
     const now = Date.now();
-    if (now - last < 450) return;
+    if (now - last < 500) return;
     last = now;
-    e.preventDefault();
-    e.stopPropagation();
+    // Sync call — WebXR needs the click gesture still active (no preventDefault / microtask).
+    if ($('home-error')) $('home-error').textContent = 'Button pressed…';
     fn();
   };
   el.addEventListener('click', run);
-  // Quest 2D panel laser sometimes delivers pointerup more reliably than click.
   el.addEventListener('pointerup', run);
 }
 
 bindActivate($('btn-start'), () => startMission({ enterVr: false }));
-bindActivate($('btn-start-vr'), () => {
-  if ($('home-error')) $('home-error').textContent = '';
-  startMission({ enterVr: true, xrMode: 'vr' });
-});
-bindActivate($('btn-start-ar'), () => {
-  if ($('home-error')) $('home-error').textContent = '';
-  startMission({ enterVr: true, xrMode: 'ar' });
-});
+bindActivate($('btn-start-vr'), () => startMission({ enterVr: true, xrMode: 'vr' }));
+bindActivate($('btn-start-ar'), () => startMission({ enterVr: true, xrMode: 'ar' }));
 $('btn-settings')?.addEventListener('click', openSettings);
 $('btn-settings-done')?.addEventListener('click', closeSettings);
 $('btn-settings-reset')?.addEventListener('click', () => {
