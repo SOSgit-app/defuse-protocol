@@ -1,0 +1,667 @@
+/**
+ * 3D SCENE — room + bomb device.
+ * Desktop: orbit camera, optional SSAO/DOF.
+ * VR (Quest): immersive-vr stereo via Three.js XR, controller lasers,
+ * head-relative move + snap turn; post-processing disabled in headset.
+ * AR (Quest): immersive-ar passthrough — virtual room hidden, bomb on table.
+ */
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
+import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { Device } from './device.js?v=20261022a';
+import { createFly } from './fly.js';
+import { createDeskFan } from './fan.js';
+import { attachXR } from './xr.js?v=20261022j';
+import { createPauseMenu } from './pauseMenu.js?v=20261022a';
+import { createArPlacement } from './arPlacement.js?v=20261022a';
+
+export function createDeviceScene(container, initialQuality = 'medium') {
+  /* ---------- renderer (XR-compatible; alpha for AR passthrough) ---------- */
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    alpha: true,
+    powerPreference: 'high-performance',
+    // Required for immersive-vr / immersive-ar on Quest Browser.
+    xrCompatible: true
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
+  renderer.xr.enabled = true;
+  renderer.setClearColor(0x0a0c11, 1);
+  container.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const vrBackground = new THREE.Color(0x0a0c11);
+  scene.background = vrBackground;
+  scene.fog = new THREE.Fog(0x0a0c11, 7, 18);
+
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environmentIntensity = 0.25;
+
+  /* ---------- player dolly ----------
+     Camera is a child of dolly so WebXR locomotion moves the whole rig.
+     On desktop, dolly stays at origin and OrbitControls orbits the bomb.
+  */
+  const dolly = new THREE.Group();
+  scene.add(dolly);
+
+  const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 60);
+  camera.position.set(0.95, 1.05, 1.25);
+  dolly.add(camera);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0.12, 0);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.minDistance = 0.55;
+  controls.maxDistance = 5;
+  controls.maxPolarAngle = Math.PI * 0.52;
+  controls.update();
+
+  /* ---------- the room (hidden in AR passthrough) ---------- */
+  const vrShell = new THREE.Group();
+  vrShell.name = 'vrShell';
+  scene.add(vrShell);
+
+  const room = new THREE.Mesh(
+    new THREE.BoxGeometry(16, 7, 16),
+    new THREE.MeshStandardMaterial({ color: 0x161a22, roughness: 0.95, metalness: 0, side: THREE.BackSide })
+  );
+  room.position.y = 2.6;
+  room.receiveShadow = true;
+  vrShell.add(room);
+
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(16, 16),
+    new THREE.MeshStandardMaterial({ color: 0x23201d, roughness: 0.9, metalness: 0.02 })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -0.851;
+  floor.receiveShadow = true;
+  vrShell.add(floor);
+
+  /* Stage = table + bomb + fan — snapped onto real planes in AR */
+  const stage = new THREE.Group();
+  stage.name = 'stage';
+  scene.add(stage);
+
+  const woodMat = new THREE.MeshStandardMaterial({ color: 0x5a4632, roughness: 0.7, metalness: 0.02 });
+  const tableTop = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.07, 1.7), woodMat);
+  tableTop.position.y = -0.035;
+  tableTop.castShadow = tableTop.receiveShadow = true;
+  stage.add(tableTop);
+  const legGeo = new THREE.BoxGeometry(0.09, 0.78, 0.09);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const leg = new THREE.Mesh(legGeo, woodMat);
+    leg.position.set(sx * 1.18, -0.46, sz * 0.73);
+    leg.castShadow = true;
+    stage.add(leg);
+  }
+
+  const crateMat = new THREE.MeshStandardMaterial({ color: 0x3a3327, roughness: 0.85 });
+  [[-3.2, -3.5, 0.9], [-2.4, -4.2, 0.55], [3.0, -3.8, 0.7], [3.8, -2.6, 1.1]].forEach(([x, z, s]) => {
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), crateMat);
+    crate.position.set(x, s / 2 - 0.85, z);
+    crate.rotation.y = x * 0.4;
+    crate.castShadow = crate.receiveShadow = true;
+    vrShell.add(crate);
+  });
+
+  /* ---------- lights ---------- */
+  const ambient = new THREE.AmbientLight(0x404a5a, 0.5);
+  scene.add(ambient);
+
+  const keyLight = new THREE.SpotLight(0xfff1dd, 260, 14, 0.55, 0.55, 1.6);
+  keyLight.position.set(1.8, 3.4, 1.2);
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.set(2048, 2048);
+  keyLight.shadow.bias = -0.0004;
+  keyLight.target.position.set(0, 0, 0);
+  scene.add(keyLight, keyLight.target);
+  const fixture = new THREE.Mesh(
+    new THREE.ConeGeometry(0.18, 0.22, 20, 1, true),
+    new THREE.MeshStandardMaterial({ color: 0x22262e, metalness: 0.7, roughness: 0.4, side: THREE.DoubleSide })
+  );
+  fixture.position.copy(keyLight.position).add(new THREE.Vector3(0, 0.05, 0));
+  fixture.lookAt(0, 0, 0);
+  fixture.rotateX(-Math.PI / 2);
+  vrShell.add(fixture);
+
+  const lampLight = new THREE.PointLight(0xffb35c, 14, 7, 1.8);
+  lampLight.position.set(-1.05, 0.52, -0.55);
+  lampLight.castShadow = true;
+  lampLight.shadow.mapSize.set(1024, 1024);
+  lampLight.shadow.bias = -0.0005;
+  scene.add(lampLight);
+  const lampMat = new THREE.MeshStandardMaterial({ color: 0x2c313c, metalness: 0.6, roughness: 0.45 });
+  const lampArm = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.02, 0.5, 10), lampMat);
+  lampArm.position.set(-1.05, 0.25, -0.55);
+  lampArm.castShadow = true;
+  const lampShade = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.14, 18, 1, true),
+    new THREE.MeshStandardMaterial({ color: 0x394150, metalness: 0.5, roughness: 0.5, side: THREE.DoubleSide }));
+  lampShade.position.set(-1.05, 0.56, -0.55);
+  const lampBase = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.03, 16), lampMat);
+  lampBase.position.set(-1.05, 0.015, -0.55);
+  vrShell.add(lampArm, lampShade, lampBase);
+
+  const rim = new THREE.DirectionalLight(0x5a7fc0, 0.8);
+  rim.position.set(-2.5, 1.6, 2.4);
+  scene.add(rim);
+
+  const lightDefaults = {
+    ambient: 0.5,
+    key: 260,
+    lamp: 14,
+    rim: 0.8,
+    exposure: 1.15,
+    env: 0.25
+  };
+
+  const fxLight = new THREE.PointLight(0xff2233, 0, 4, 1.5);
+  fxLight.position.set(0, 0.9, 0);
+  scene.add(fxLight);
+
+  /* ---------- post-processing (desktop only — never in VR) ---------- */
+  const composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  const ssao = new SSAOPass(scene, camera, container.clientWidth, container.clientHeight);
+  ssao.kernelRadius = 0.12;
+  ssao.minDistance = 0.0008;
+  ssao.maxDistance = 0.06;
+  composer.addPass(ssao);
+  const bokeh = new BokehPass(scene, camera, { focus: 1.6, aperture: 0.00045, maxblur: 0.0055 });
+  composer.addPass(bokeh);
+  composer.addPass(new OutputPass());
+
+  const QUALITY = {
+    low:    { pixelRatio: 0.75, keyShadow: 0,    lampShadow: 0,   ssao: false, dof: false },
+    medium: { pixelRatio: 1,    keyShadow: 1024, lampShadow: 0,   ssao: false, dof: false },
+    high:   { pixelRatio: Math.min(window.devicePixelRatio, 2),
+              keyShadow: 2048,  lampShadow: 512, ssao: true,  dof: true }
+  };
+
+  let qualityBeforeVR = initialQuality;
+  let currentQuality = initialQuality;
+
+  function applyShadow(light, size) {
+    light.castShadow = size > 0;
+    if (size > 0 && light.shadow.mapSize.x !== size) {
+      light.shadow.mapSize.set(size, size);
+      if (light.shadow.map) {
+        light.shadow.map.dispose();
+        light.shadow.map = null;
+      }
+    }
+  }
+
+  function setQuality(level) {
+    currentQuality = level;
+    const q = QUALITY[level] || QUALITY.medium;
+    // While presenting XR, Three.js owns the framebuffer — keep pixel ratio modest.
+    const pr = renderer.xr.isPresenting ? 1 : q.pixelRatio;
+    renderer.setPixelRatio(pr);
+    if (!renderer.xr.isPresenting) composer.setPixelRatio(pr);
+    applyShadow(keyLight, renderer.xr.isPresenting ? 0 : q.keyShadow);
+    applyShadow(lampLight, 0); // point-light shadows are too expensive on Quest
+    ssao.enabled = !renderer.xr.isPresenting && q.ssao;
+    bokeh.enabled = !renderer.xr.isPresenting && q.dof;
+    resize();
+  }
+
+  function resize() {
+    if (renderer.xr.isPresenting) return;
+    const w = container.clientWidth || 1;
+    const h = container.clientHeight || 1;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h);
+    composer.setSize(w, h);
+  }
+  const ro = new ResizeObserver(resize);
+  ro.observe(container);
+  resize();
+
+  /* ---------- desktop pointer interaction ---------- */
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+  let device = null;
+  let downAt = null;
+  let hovered = null;
+  const fly = createFly();
+  scene.add(fly.group);
+  const fan = createDeskFan((on) => api.onFanChange?.(on));
+  fan.setVisible(false);
+  stage.add(fan.group);
+  const arPlace = createArPlacement({ renderer, scene, stage });
+  const headPos = new THREE.Vector3();
+  const fanPos = new THREE.Vector3();
+  const timerPos = new THREE.Vector3();
+  const lookDir = new THREE.Vector3();
+  const upDir = new THREE.Vector3();
+  let lastLanded = false;
+
+  let systemLeave = null; // 'mainMenu' | null
+  let flyEnabled = false;
+  let xrMode = null; // 'vr' | 'ar' | null
+  let tableHeight = 0.75;
+
+  function applyTableHeight() {
+    arPlace.setDefaultHeight(tableHeight);
+    if (!renderer.xr.isPresenting) {
+      stage.position.y = 0;
+      return;
+    }
+    // VR: fixed table height from settings. AR placement owns Y while active.
+    if (xrMode === 'vr') stage.position.y = tableHeight;
+  }
+
+  function applyPassthroughVisuals(on) {
+    if (on) {
+      vrShell.visible = false;
+      scene.background = null;
+      scene.fog = null;
+      renderer.setClearColor(0x000000, 0);
+      ambient.intensity = 0.85;
+      keyLight.intensity = 90;
+      lampLight.intensity = 6;
+      rim.intensity = 0.35;
+      renderer.toneMappingExposure = 1.0;
+      scene.environmentIntensity = 0.45;
+    } else {
+      vrShell.visible = true;
+      scene.background = vrBackground;
+      scene.fog = new THREE.Fog(0x0a0c11, 7, 18);
+      renderer.setClearColor(0x0a0c11, 1);
+      ambient.intensity = lightDefaults.ambient;
+      keyLight.intensity = lightDefaults.key;
+      lampLight.intensity = lightDefaults.lamp;
+      rim.intensity = lightDefaults.rim;
+      renderer.toneMappingExposure = lightDefaults.exposure;
+      scene.environmentIntensity = lightDefaults.env;
+    }
+  }
+
+  const pauseMenu = createPauseMenu({
+    onResume: closePauseMenu,
+    onMainMenu: () => {
+      systemLeave = 'mainMenu';
+      pauseMenu.hide();
+      setGripModelVisible(hiddenGrip, true);
+      hiddenGrip = null;
+      api.onSystemMenu?.('mainMenu');
+    },
+    onReposition: () => {
+      arPlace.unlock();
+      // Setup again — keep the clock frozen until they lock the table.
+      api.onSystemMenu?.('pause');
+      closePauseMenu();
+    },
+    onTableHeightLive: () => {
+      // Height tweaks should not freeze via the pause menu, but AR setup still owns pause.
+      if (!arPlace.isPlacing()) api.onSystemMenu?.('resume');
+    },
+    getSettings: () => api.getVrSettings?.(),
+    setSettings: (next) => api.onVrSettings?.(next)
+  });
+  scene.add(pauseMenu.group);
+  let hiddenGrip = null;
+
+  function setGripModelVisible(grip, on) {
+    if (!grip) return;
+    for (const child of grip.children) {
+      if (child !== pauseMenu.group) child.visible = on;
+    }
+  }
+
+  function placePauseMenu() {
+    const hand = xr.getLeftHand && xr.getLeftHand();
+    const host = hand && (hand.grip || hand.controller);
+    if (!host) return false;
+    if (pauseMenu.group.parent !== host) host.add(pauseMenu.group);
+    pauseMenu.group.position.set(0, 0.12, 0.05);
+    pauseMenu.group.rotation.set(-Math.PI / 2 + 0.45, 0, 0);
+    pauseMenu.group.scale.setScalar(1.45);
+    if (hand.grip) {
+      if (hiddenGrip && hiddenGrip !== hand.grip) setGripModelVisible(hiddenGrip, true);
+      hiddenGrip = hand.grip;
+      setGripModelVisible(hand.grip, false);
+    }
+    return true;
+  }
+
+  function openPauseMenu() {
+    if (!device || device.over || !renderer.xr.isPresenting) return;
+    if (pauseMenu.open) {
+      closePauseMenu();
+      return;
+    }
+    pauseMenu.show();
+    placePauseMenu();
+    api.onSystemMenu?.('pause');
+  }
+
+  function closePauseMenu() {
+    const mayResume = !arPlace.isPlacing();
+    if (!pauseMenu.open) {
+      if (mayResume) api.onSystemMenu?.('resume');
+      return;
+    }
+    pauseMenu.hide();
+    setGripModelVisible(hiddenGrip, true);
+    hiddenGrip = null;
+    if (pauseMenu.group.parent !== scene) scene.add(pauseMenu.group);
+    pauseMenu.group.scale.setScalar(1);
+    if (mayResume) api.onSystemMenu?.('resume');
+  }
+
+  function interactTargets() {
+    if (pauseMenu.open) return pauseMenu.targets;
+    if (arPlace.isPlacing()) return [];
+    const t = device ? [...device.targets] : [];
+    if (fan.group.visible) t.push(fan.hit);
+    return t;
+  }
+
+  function castAt(e) {
+    if (!device || renderer.xr.isPresenting) return null;
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, camera);
+    const hits = raycaster.intersectObjects(interactTargets(), false);
+    return hits.find((h) => h.object.userData.onClick) || null;
+  }
+
+  renderer.domElement.addEventListener('pointerdown', (e) => {
+    downAt = { x: e.clientX, y: e.clientY };
+  });
+  renderer.domElement.addEventListener('pointerup', (e) => {
+    if (!downAt || renderer.xr.isPresenting) return;
+    const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y);
+    downAt = null;
+    if (moved > 7) return;
+    const hit = castAt(e);
+    if (hit) hit.object.userData.onClick();
+  });
+  renderer.domElement.addEventListener('pointermove', (e) => {
+    if (renderer.xr.isPresenting) return;
+    const hit = castAt(e);
+    const targets = hit ? (hit.object.userData.highlightTargets || []) : [];
+    if (hovered && hovered !== targets[0]) setHighlight(hovered, false);
+    hovered = targets[0] || null;
+    if (hovered) setHighlight(hovered, true);
+    renderer.domElement.style.cursor = hit ? 'pointer' : 'grab';
+  });
+
+  function setHighlight(mesh, on) {
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      if (!m.userData.baseEmissive) m.userData.baseEmissive = m.emissive ? m.emissive.clone() : null;
+      if (m.emissive && m.userData.baseEmissive) {
+        m.emissive.copy(m.userData.baseEmissive);
+        if (on) m.emissive.add(new THREE.Color(0x182618));
+      }
+    }
+  }
+
+  /* ---------- WebXR ---------- */
+  const xr = attachXR({
+    renderer,
+    scene,
+    camera,
+    dolly,
+    getTargets: () => interactTargets(),
+    onSelect: (obj) => {
+      if (obj.userData.onClick) obj.userData.onClick();
+    },
+    onSelectEmpty: () => {
+      if (arPlace.isPlacing() && arPlace.tryPlace()) {
+        // Table locked — bomb clock starts / resumes.
+        api.onSystemMenu?.('resume');
+      }
+    },
+    onMenuButton: openPauseMenu,
+    isMenuOpen: () => pauseMenu.open || arPlace.isPlacing(),
+    onSessionStart: (mode) => {
+      xrMode = mode === 'ar' ? 'ar' : 'vr';
+      qualityBeforeVR = currentQuality;
+      setQuality('low'); // comfort + perf defaults on Quest
+      controls.enabled = false;
+      applyPassthroughVisuals(xrMode === 'ar');
+      camera.position.set(0, 0, 0);
+      dolly.rotation.set(0, 0, 0);
+      if (xrMode === 'ar') {
+        dolly.position.set(0, 0, 0);
+        arPlace.setDefaultHeight(tableHeight);
+        arPlace.begin();
+        pauseMenu.setRepositionVisible(true);
+        // Freeze the timer while the player places / sizes the table.
+        api.onSystemMenu?.('pause');
+      } else {
+        dolly.position.set(0, 0, 1.35);
+        arPlace.end();
+        pauseMenu.setRepositionVisible(false);
+        stage.position.set(0, tableHeight, 0);
+        stage.rotation.set(0, 0, 0);
+        stage.scale.setScalar(1);
+      }
+      document.body.classList.add('xr-presenting');
+      document.body.classList.toggle('xr-ar-presenting', xrMode === 'ar');
+      if (api.onXRChange) api.onXRChange(true, xrMode);
+    },
+    onSessionEnd: () => {
+      pauseMenu.hide();
+      setGripModelVisible(hiddenGrip, true);
+      hiddenGrip = null;
+      if (pauseMenu.group.parent !== scene) scene.add(pauseMenu.group);
+      pauseMenu.group.scale.setScalar(1);
+      pauseMenu.setRepositionVisible(false);
+      arPlace.end();
+      stage.position.set(0, 0, 0);
+      stage.rotation.set(0, 0, 0);
+      stage.scale.setScalar(1);
+      if (systemLeave !== 'mainMenu') {
+        api.onSystemMenu?.('resume');
+      }
+      systemLeave = null;
+      controls.enabled = true;
+      dolly.position.set(0, 0, 0);
+      dolly.rotation.set(0, 0, 0);
+      camera.position.set(0.95, 1.05, 1.25);
+      controls.target.set(0, 0.12, 0);
+      controls.update();
+      applyPassthroughVisuals(false);
+      xrMode = null;
+      setQuality(qualityBeforeVR);
+      document.body.classList.remove('xr-presenting', 'xr-ar-presenting');
+      if (api.onXRChange) api.onXRChange(false, null);
+    }
+  });
+
+  /* ---------- FX ---------- */
+  let shake = 0;
+  let fxPulse = 0;
+  const baseTarget = new THREE.Vector3(0, 0.12, 0);
+
+  setQuality(initialQuality);
+
+  /* ---------- render loop (setAnimationLoop required for XR) ---------- */
+  const clock = new THREE.Clock();
+  let running = true;
+
+  function loop(_time, frame) {
+    if (!running) return;
+    const dt = Math.min(clock.getDelta(), 0.1);
+    const t = clock.elapsedTime;
+    const presenting = renderer.xr.isPresenting;
+
+    if (!presenting && container.offsetParent === null) return;
+
+    if (!presenting) controls.update();
+    xr.tick(dt);
+    if (presenting && xrMode === 'ar') {
+      arPlace.tick(dt);
+    }
+    if (pauseMenu.open) placePauseMenu();
+    if (device) device.tick(dt, t);
+    fan.tick(dt);
+    camera.getWorldPosition(headPos);
+    camera.getWorldDirection(lookDir);
+    upDir.setFromMatrixColumn(camera.matrixWorld, 1);
+    fan.intakeWorld(fanPos);
+    const flyState = fly.tick(dt, t, {
+      gameOver: !!(device && device.over),
+      head: headPos,
+      fanOn: fan.on,
+      fanPos,
+      timerPos: device ? device.timerWorldPos(timerPos) : null
+    });
+    if (flyState.squashed) {
+      lastLanded = false;
+      device?.setPest(false);
+      api.onFlyChange?.({ landed: false, squashed: true });
+    } else if (flyState.landed !== lastLanded) {
+      lastLanded = !!flyState.landed;
+      device?.setPest(lastLanded);
+      api.onFlyChange?.({ landed: flyState.landed });
+    }
+    api.onFlyAudio?.({
+      flyPos: fly.group.position,
+      earPos: headPos,
+      look: lookDir,
+      up: upDir,
+      alive: flyState.alive,
+      landed: flyState.landed
+    });
+
+    if (!presenting && shake > 0.001) {
+      controls.target.set(
+        baseTarget.x + (Math.random() - 0.5) * 0.02 * shake,
+        baseTarget.y + (Math.random() - 0.5) * 0.02 * shake,
+        baseTarget.z + (Math.random() - 0.5) * 0.02 * shake
+      );
+      shake *= Math.pow(0.02, dt);
+    } else if (!presenting && shake !== 0) {
+      shake = 0;
+      controls.target.copy(baseTarget);
+    }
+
+    if (fxPulse > 0.01) {
+      fxPulse *= Math.pow(0.01, dt);
+      fxLight.intensity = fxPulse;
+    } else {
+      fxLight.intensity = 0;
+    }
+
+    // VR: direct stereo render (no SSAO/bokeh — Quest already lens-distorts).
+    if (presenting) {
+      renderer.render(scene, camera);
+    } else {
+      if (bokeh.enabled) {
+        bokeh.uniforms.focus.value = camera.position.distanceTo(baseTarget);
+      }
+      composer.render();
+    }
+  }
+  renderer.setAnimationLoop(loop);
+
+  const api = {
+    onXRChange: null,
+    onFlyChange: null,
+    onFlyAudio: null,
+    onFanChange: null,
+    onSystemMenu: null,
+    getVrSettings: null,
+    onVrSettings: null,
+    startGame(payload, send, { fly: enableFly = false } = {}) {
+      pauseMenu.hide();
+      setGripModelVisible(hiddenGrip, true);
+      hiddenGrip = null;
+      if (device) stage.remove(device.group);
+      device = new Device(payload, send);
+      stage.add(device.group);
+      lastLanded = false;
+      flyEnabled = !!enableFly;
+      fan.setVisible(flyEnabled);
+      if (flyEnabled) fly.arm();
+      else {
+        fly.hide();
+        api.onFlyChange?.({ landed: false });
+        api.onFlyAudio?.({ alive: false });
+        api.onFanChange?.(false);
+      }
+    },
+    setFlyEnabled(on) {
+      const next = !!on;
+      if (next === flyEnabled) return;
+      flyEnabled = next;
+      fan.setVisible(flyEnabled);
+      if (flyEnabled) fly.arm();
+      else {
+        fly.hide();
+        lastLanded = false;
+        device?.setPest(false);
+        api.onFlyChange?.({ landed: false });
+        api.onFlyAudio?.({ alive: false });
+        api.onFanChange?.(false);
+      }
+    },
+    setTableHeight(m) {
+      const next = Math.max(0.12, Math.min(1.55, Number(m) || 0.75));
+      tableHeight = next;
+      applyTableHeight();
+    },
+    updateModule(id, view) { if (device) device.updateModule(id, view); },
+    markSolved(id) {
+      if (!device) return;
+      device.markSolved(id);
+      fxLight.color.setHex(0x39d98a);
+      fxPulse = 8;
+    },
+    setTimer(ms) { if (device) device.setTimer(ms); },
+    setStrikes(n) { if (device) device.setStrikes(n); },
+    setQuality,
+    enterVR: () => xr.enterVR(),
+    enterAR: () => xr.enterAR(),
+    enterXR: (mode) => xr.enterXR(mode),
+    exitVR: () => xr.exitVR(),
+    isXRPresenting: () => renderer.xr.isPresenting,
+    xrMode: () => xrMode,
+    strikeFx() {
+      fxLight.color.setHex(0xff2233);
+      fxPulse = 22;
+      if (!renderer.xr.isPresenting) shake = 1;
+    },
+    gameOver(won) {
+      if (!device) return;
+      device.setPest(false);
+      device.gameOver(won);
+      lastLanded = false;
+      fly.hide();
+      fan.setVisible(false);
+      api.onFlyAudio?.({ alive: false });
+      api.onFanChange?.(false);
+      fxLight.color.setHex(won ? 0x39d98a : 0xff2233);
+      fxPulse = won ? 10 : 40;
+      if (!won && !renderer.xr.isPresenting) shake = 2.5;
+    },
+    destroy() {
+      running = false;
+      renderer.setAnimationLoop(null);
+      if (renderer.xr.isPresenting) xr.exitVR();
+      ro.disconnect();
+      renderer.dispose();
+      if (renderer.domElement.parentNode) container.removeChild(renderer.domElement);
+    }
+  };
+  return api;
+}

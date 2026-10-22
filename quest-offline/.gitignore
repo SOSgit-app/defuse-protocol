@@ -1,0 +1,11 @@
+node_modules/
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/app/src/main/jniLibs/
+*.apk
+*.apks
+*.idsig
+.app-release-aligned.apk
+.verify-tmp/

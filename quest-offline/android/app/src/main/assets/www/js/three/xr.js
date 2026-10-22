@@ -1,0 +1,405 @@
+/**
+ * WebXR helpers for Quest — immersive-vr (virtual room) and immersive-ar (passthrough).
+ * Three.js owns stereo + XRWebGLLayer; this module adds controllers,
+ * comfort locomotion (head-relative move + snap turn), and laser interact.
+ */
+import * as THREE from 'three';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+
+const SNAP_DEG = 30;
+const MOVE_SPEED = 1.4; // m/s
+const DEADZONE = 0.25;
+
+/**
+ * Attach XR to an existing Three.js scene/renderer.
+ * @returns {{ enterVR, enterAR, enterXR, exitVR, isPresenting, mode, tick, ... }}
+ */
+export function attachXR({
+  renderer,
+  scene,
+  camera,
+  dolly,
+  getTargets,
+  onSelect,
+  onSelectEmpty,
+  onSessionStart,
+  onSessionEnd,
+  onMenuButton,
+  isMenuOpen
+}) {
+  renderer.xr.enabled = true;
+  // Prefer floor-relative tracking so standing height matches the room.
+  renderer.xr.setReferenceSpaceType('local-floor');
+
+  // Warm XR-compatible GL early so enterXR can requestSession on the click gesture
+  // (awaiting makeXRCompatible inside the click handler expires user-activation on Quest).
+  try {
+    const gl = renderer.getContext();
+    if (gl?.makeXRCompatible) void gl.makeXRCompatible();
+  } catch (_) {
+    /* ignore — requestSession will surface a real error if needed */
+  }
+
+  const modelFactory = new XRControllerModelFactory();
+  modelFactory.setPath('./vendor/webxr-profiles/');
+  const controllers = [];
+  const grips = [];
+  const rays = [];
+  const tempMatrix = new THREE.Matrix4();
+  const raycaster = new THREE.Raycaster();
+  let currentMode = null; // 'vr' | 'ar' | null
+
+  for (let i = 0; i < 2; i++) {
+    const controller = renderer.xr.getController(i);
+    controller.userData.index = i;
+    dolly.add(controller);
+
+    // Laser pointer line
+    const lineGeom = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, 0, -1.5)
+    ]);
+    const line = new THREE.Line(
+      lineGeom,
+      new THREE.LineBasicMaterial({ color: 0x39d98a, transparent: true, opacity: 0.85 })
+    );
+    line.scale.z = 1;
+    controller.add(line);
+    rays.push(line);
+
+    controller.addEventListener('selectstart', () => {
+      const hit = castFromController(controller);
+      if (hit && hit.object.userData.onClick) {
+        onSelect(hit.object);
+      } else if (onSelectEmpty) {
+        onSelectEmpty(controller);
+      }
+    });
+    controllers.push(controller);
+
+    const grip = renderer.xr.getControllerGrip(i);
+    grip.add(modelFactory.createControllerModel(grip));
+    dolly.add(grip);
+    grips.push(grip);
+
+    function bindSource(e) {
+      controller.userData.inputSource = e.data;
+      controller.userData.gamepad = e.data.gamepad;
+      grip.userData.inputSource = e.data;
+    }
+    controller.addEventListener('connected', bindSource);
+    grip.addEventListener('connected', bindSource);
+    controller.addEventListener('disconnected', () => {
+      controller.userData.inputSource = null;
+      controller.userData.gamepad = null;
+      grip.userData.inputSource = null;
+    });
+  }
+
+  function castFromController(controller) {
+    const targets = getTargets() || [];
+    if (!targets.length) return null;
+    tempMatrix.identity().extractRotation(controller.matrixWorld);
+    raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+    const hits = raycaster.intersectObjects(targets, false);
+    return hits.find((h) => h.object.userData.onClick) || null;
+  }
+
+  // Hover highlight via right-hand / either controller ray
+  let hovered = null;
+  function updateHover() {
+    let hit = null;
+    for (const c of controllers) {
+      hit = castFromController(c);
+      if (hit) break;
+    }
+    const mesh = hit ? (hit.object.userData.highlightTargets || [hit.object])[0] : null;
+    if (hovered && hovered !== mesh) setHighlight(hovered, false);
+    hovered = mesh || null;
+    if (hovered) setHighlight(hovered, true);
+    for (const line of rays) {
+      line.material.color.setHex(hit ? 0xffd23f : 0x39d98a);
+    }
+  }
+
+  function setHighlight(mesh, on) {
+    if (!mesh || !mesh.material) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      if (!m.emissive) continue;
+      if (!m.userData.baseEmissive) m.userData.baseEmissive = m.emissive.clone();
+      m.emissive.copy(m.userData.baseEmissive);
+      if (on) m.emissive.add(new THREE.Color(0x182618));
+    }
+  }
+
+  let yWasPressed = false;
+  let leftMenuSource = null;
+  function tickMenuButton() {
+    if (!renderer.xr.isPresenting) {
+      yWasPressed = false;
+      return;
+    }
+    const session = renderer.xr.getSession();
+    if (!session) return;
+    let pressed = false;
+    let ySource = null;
+    for (const src of session.inputSources) {
+      if (src.handedness !== 'left' || !src.gamepad || !src.gamepad.buttons) continue;
+      const y = src.gamepad.buttons[5];
+      if (y && y.pressed) {
+        pressed = true;
+        ySource = src;
+      }
+    }
+    if (ySource) leftMenuSource = ySource;
+    if (pressed && !yWasPressed) onMenuButton && onMenuButton(ySource);
+    yWasPressed = pressed;
+  }
+
+  function spacesForSource(src) {
+    if (src) {
+      for (let i = 0; i < controllers.length; i++) {
+        const data = controllers[i].userData.inputSource;
+        if (data === src || (data && data.gamepad && src.gamepad && data.gamepad === src.gamepad)) {
+          return { controller: controllers[i], grip: grips[i] };
+        }
+      }
+    }
+    for (let i = 0; i < controllers.length; i++) {
+      const data = controllers[i].userData.inputSource;
+      if (data && data.handedness === 'left') {
+        return { controller: controllers[i], grip: grips[i] };
+      }
+    }
+    const session = renderer.xr.getSession();
+    if (session) {
+      for (const input of session.inputSources) {
+        if (input.handedness !== 'left') continue;
+        for (let i = 0; i < controllers.length; i++) {
+          const data = controllers[i].userData.inputSource;
+          if (data === input || controllers[i].userData.gamepad === input.gamepad) {
+            return { controller: controllers[i], grip: grips[i] };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function getLeftHand() {
+    return spacesForSource(leftMenuSource);
+  }
+
+  // Comfort locomotion state
+  let snapCooldown = 0;
+  const headForward = new THREE.Vector3();
+  const headRight = new THREE.Vector3();
+  const wish = new THREE.Vector3();
+
+  function readAxes(gamepad) {
+    if (!gamepad || !gamepad.axes) return { x: 0, y: 0 };
+    // Quest Touch: axes 2,3 are thumbstick on many profiles; fallback 0,1
+    const ax = gamepad.axes;
+    if (ax.length >= 4) return { x: ax[2], y: ax[3] };
+    return { x: ax[0] || 0, y: ax[1] || 0 };
+  }
+
+  function tickLocomotion(dt) {
+    if (!renderer.xr.isPresenting) return;
+    if (isMenuOpen && isMenuOpen()) return;
+    snapCooldown = Math.max(0, snapCooldown - dt);
+
+    const session = renderer.xr.getSession();
+    if (!session) return;
+
+    let movePad = { x: 0, y: 0 };
+    let turnPad = { x: 0, y: 0 };
+
+    for (const src of session.inputSources) {
+      if (!src.gamepad) continue;
+      const handed = src.handedness;
+      const axes = readAxes(src.gamepad);
+      if (handed === 'left') movePad = axes;
+      if (handed === 'right') turnPad = axes;
+    }
+
+    // Snap turn (right stick X)
+    if (snapCooldown <= 0 && Math.abs(turnPad.x) > 0.6) {
+      const dir = turnPad.x > 0 ? -1 : 1;
+      dolly.rotation.y += THREE.MathUtils.degToRad(SNAP_DEG) * dir;
+      snapCooldown = 0.35;
+    }
+
+    // Head-relative move (left stick)
+    const mx = Math.abs(movePad.x) > DEADZONE ? movePad.x : 0;
+    const my = Math.abs(movePad.y) > DEADZONE ? movePad.y : 0;
+    if (mx || my) {
+      // XR camera world forward projected onto XZ
+      const xrCam = renderer.xr.getCamera();
+      xrCam.getWorldDirection(headForward);
+      headForward.y = 0;
+      if (headForward.lengthSq() < 1e-6) headForward.set(0, 0, -1);
+      else headForward.normalize();
+      headRight.crossVectors(headForward, new THREE.Vector3(0, 1, 0)).normalize();
+
+      wish.set(0, 0, 0);
+      wish.addScaledVector(headForward, -my);
+      wish.addScaledVector(headRight, mx);
+      if (wish.lengthSq() > 1) wish.normalize();
+      dolly.position.addScaledVector(wish, MOVE_SPEED * dt);
+
+      // Soft bounds so you don't walk into the void
+      const bound = currentMode === 'ar' ? 5.0 : 3.5;
+      dolly.position.x = THREE.MathUtils.clamp(dolly.position.x, -bound, bound);
+      dolly.position.z = THREE.MathUtils.clamp(dolly.position.z, -bound, bound);
+    }
+  }
+
+  let sessionListenersBound = false;
+
+  function bindSessionEvents() {
+    if (sessionListenersBound) return;
+    sessionListenersBound = true;
+    renderer.xr.addEventListener('sessionstart', () => {
+      onSessionStart && onSessionStart(currentMode || 'vr');
+    });
+    renderer.xr.addEventListener('sessionend', () => {
+      const ended = currentMode;
+      currentMode = null;
+      onSessionEnd && onSessionEnd(ended);
+    });
+  }
+  bindSessionEvents();
+
+  async function enterXR(mode = 'vr') {
+    if (!navigator.xr) throw new Error('WebXR not available in this browser.');
+    const sessionMode = mode === 'ar' ? 'immersive-ar' : 'immersive-vr';
+
+    // Installed immersive PWA: index.html already called requestSession on icon-tap.
+    // Attach that session so Horizon leaves the loading spinner.
+    const early = typeof window !== 'undefined' ? window.__defuseEarlyXr : null;
+    if (mode !== 'ar' && early && (early.session || early.promise)) {
+      currentMode = 'vr';
+      try {
+        const session = early.session || (await early.promise);
+        early.promise = null;
+        early.session = null;
+        if (session) {
+          await renderer.xr.setSession(session);
+          return;
+        }
+        if (early.error) throw early.error;
+      } catch (err) {
+        currentMode = null;
+        early.promise = null;
+        early.session = null;
+        // Fall through and try a fresh requestSession (Browser / retry).
+        console.warn('[XR] early session attach failed, retrying', err);
+      }
+    }
+
+    // Prefer local-floor (Quest PWA / Browser). Avoid requiring bounded-floor —
+    // that reference space has caused black-void sessions on Quest Browser.
+    // CRITICAL: call requestSession synchronously from the user gesture — do NOT
+    // await isSessionSupported / makeXRCompatible first (Quest drops activation).
+    const sessionInit = mode === 'ar'
+      ? {
+          requiredFeatures: ['local-floor'],
+          optionalFeatures: [
+            'plane-detection',
+            'hit-test',
+            'anchors',
+            'hand-tracking',
+            'layers'
+          ]
+        }
+      : {
+          requiredFeatures: ['local-floor'],
+          optionalFeatures: ['hand-tracking', 'layers', 'anchors']
+        };
+    currentMode = mode === 'ar' ? 'ar' : 'vr';
+    try {
+      const session = await navigator.xr.requestSession(sessionMode, sessionInit);
+      await renderer.xr.setSession(session);
+    } catch (err) {
+      // Retry AR without required local-floor if the headset rejects it.
+      if (mode === 'ar') {
+        try {
+          const session = await navigator.xr.requestSession(sessionMode, {
+            optionalFeatures: [
+              'local-floor',
+              'plane-detection',
+              'hit-test',
+              'anchors',
+              'bounded-floor',
+              'hand-tracking',
+              'layers'
+            ]
+          });
+          await renderer.xr.setSession(session);
+          return;
+        } catch (err2) {
+          currentMode = null;
+          throw err2;
+        }
+      }
+      currentMode = null;
+      throw err;
+    }
+  }
+
+  function enterVR() {
+    return enterXR('vr');
+  }
+
+  function enterAR() {
+    return enterXR('ar');
+  }
+
+  function exitVR() {
+    const session = renderer.xr.getSession();
+    if (session) session.end();
+  }
+
+  return {
+    enterVR,
+    enterAR,
+    enterXR,
+    exitVR,
+    isPresenting: () => renderer.xr.isPresenting,
+    mode: () => currentMode,
+    tick(dt) {
+      if (!renderer.xr.isPresenting) return;
+      tickMenuButton();
+      tickLocomotion(dt);
+      updateHover();
+    },
+    controllers,
+    getLeftHand,
+    SNAP_DEG,
+    MOVE_SPEED
+  };
+}
+
+/** Detect immersive-vr / immersive-ar support (Quest Browser etc.). */
+export async function detectXRSupport() {
+  if (!navigator.xr || !navigator.xr.isSessionSupported) {
+    return { supported: false, vr: false, ar: false, reason: 'navigator.xr missing' };
+  }
+  let vr = false;
+  let ar = false;
+  try {
+    vr = await navigator.xr.isSessionSupported('immersive-vr');
+  } catch (_) { /* ignore */ }
+  try {
+    ar = await navigator.xr.isSessionSupported('immersive-ar');
+  } catch (_) { /* ignore */ }
+  return {
+    supported: vr || ar,
+    vr,
+    ar,
+    reason: vr || ar ? 'ok' : 'no immersive-vr / immersive-ar'
+  };
+}

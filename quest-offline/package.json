@@ -1,0 +1,16 @@
+{
+  "name": "defuseprotocol-offline",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync": "node scripts/sync-www.mjs",
+    "sign": "node scripts/sign-release.mjs",
+    "verify": "node scripts/verify-apk.mjs",
+    "build": "npm run sync && npm run build:apk && npm run verify",
+    "build:apk": "cd android && gradlew.bat :app:assembleRelease --no-daemon"
+  },
+  "dependencies": {
+    "three": "0.165.0",
+    "@webxr-input-profiles/assets": "^1.0.17"
+  }
+}

@@ -1,0 +1,774 @@
+/**
+ * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
+ * Teammates use manual.html on another device; no multiplayer in-app.
+ */
+import { createDeviceScene } from './three/scene.js?v=20261022j';
+import { detectXRSupport } from './three/xr.js?v=20261022j';
+import { sound } from './sound.js';
+import { startSoloGame } from './solo/engine.js';
+
+const $ = (id) => document.getElementById(id);
+const screens = ['home', 'game', 'end'];
+
+const QUALITY_KEY = 'defuse-protocol.quality';
+const DIFF_KEY = 'defuse-protocol.difficulty';
+const TIME_KEY = 'defuse-protocol.times';
+const STATS_KEY = 'defuse-protocol.stats';
+const FLY_KEY = 'defuse-protocol.fly';
+const TABLE_HEIGHT_KEY = 'defuse-protocol.tableHeight';
+
+const DEFAULT_TIMES = { easy: 8 * 60 * 1000, normal: 10 * 60 * 1000, hard: 12 * 60 * 1000 };
+const DEFAULT_STRIKES = { easy: 3, normal: 3, hard: 2 };
+const STRIKE_KEY = 'defuse-protocol.strikes';
+const STRIKE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+const DEFAULT_TABLE_HEIGHT = 0.75;
+const TABLE_HEIGHT_MIN = 0.15;
+const TABLE_HEIGHT_MAX = 1.40;
+/** Fine steps for in-headset ◀ ▶ (1 cm). */
+const TABLE_HEIGHT_OPTIONS = Array.from(
+  { length: Math.round((TABLE_HEIGHT_MAX - TABLE_HEIGHT_MIN) * 100) + 1 },
+  (_, i) => Math.round((TABLE_HEIGHT_MIN + i * 0.01) * 100) / 100
+);
+const TIME_VER_KEY = 'defuse-protocol.times.v';
+const PREV_STOCK_TIMES = { easy: 6 * 60 * 1000, normal: 5 * 60 * 1000, hard: 8 * 60 * 1000 };
+const TIME_OPTIONS_MS = [
+  60 * 1000, 90 * 1000, 2 * 60 * 1000, 150 * 1000, 3 * 60 * 1000,
+  4 * 60 * 1000, 5 * 60 * 1000, 6 * 60 * 1000, 7 * 60 * 1000,
+  8 * 60 * 1000, 9 * 60 * 1000, 10 * 60 * 1000, 12 * 60 * 1000, 15 * 60 * 1000
+];
+
+const DIFF_COPY = {
+  easy: { title: 'EASY', rest: '3 modules' },
+  normal: { title: 'MEDIUM', rest: '4 modules · +1 hard' },
+  hard: { title: 'HARD', rest: '5 modules · Weapons Release + 1 hard' }
+};
+
+const state = {
+  game: null,
+  scene3d: null,
+  session: null,
+  lastSecond: null,
+  lastSeed: null,
+  lastEnterVr: false,
+  lastXrMode: 'vr', // 'vr' | 'ar'
+  xrSupported: false,
+  xrVr: false,
+  xrAr: false,
+  menuPaused: false
+};
+
+function getQuality() {
+  const q = localStorage.getItem(QUALITY_KEY) || $('select-quality').value;
+  return ['low', 'medium', 'high'].includes(q) ? q : 'medium';
+}
+
+function getDifficulty() {
+  const d = $('select-difficulty').value;
+  return ['easy', 'normal', 'hard'].includes(d) ? d : 'normal';
+}
+
+function getSeed() {
+  return String($('input-seed').value || '').trim();
+}
+
+function setSeedField(seed) {
+  $('input-seed').value = seed || '';
+  const hint = $('seed-hint');
+  if (!hint) return;
+  hint.textContent = 'Leave blank for a random bomb. Use a seed to replay the same layout.';
+  hint.classList.remove('alert');
+}
+
+function returnToMenu() {
+  state.menuPaused = false;
+  if (state.session) {
+    state.session.destroy();
+    state.session = null;
+  }
+  if (state.scene3d?.isXRPresenting()) state.scene3d.exitVR();
+  show('home');
+}
+
+function persistPrefs() {
+  localStorage.setItem(QUALITY_KEY, $('select-quality').value);
+  localStorage.setItem(DIFF_KEY, $('select-difficulty').value);
+}
+
+function loadPrefs() {
+  const q = localStorage.getItem(QUALITY_KEY);
+  if (q) $('select-quality').value = q;
+  const d = localStorage.getItem(DIFF_KEY);
+  if (d) $('select-difficulty').value = d;
+}
+loadPrefs();
+fillTimeSelects();
+fillStrikeSelects();
+syncTableHeightSlider();
+refreshDifficultyLabels();
+$('input-table-height')?.addEventListener('input', () => {
+  applyTableHeightFromSlider();
+});
+
+$('select-quality').addEventListener('change', () => {
+  persistPrefs();
+  if (state.scene3d) state.scene3d.setQuality(getQuality());
+});
+$('select-difficulty').addEventListener('change', persistPrefs);
+
+function show(name) {
+  screens.forEach((s) => $(`screen-${s}`).classList.toggle('active', s === name));
+}
+
+function fmtTime(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function clampTime(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n)) return null;
+  const nearest = TIME_OPTIONS_MS.reduce((best, opt) =>
+    Math.abs(opt - n) < Math.abs(best - n) ? opt : best
+  );
+  return nearest;
+}
+
+function loadTimes() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TIME_KEY) || '{}');
+    const times = {
+      easy: clampTime(raw.easy) ?? DEFAULT_TIMES.easy,
+      normal: clampTime(raw.normal) ?? DEFAULT_TIMES.normal,
+      hard: clampTime(raw.hard) ?? DEFAULT_TIMES.hard
+    };
+    if (localStorage.getItem(TIME_VER_KEY) !== '3') {
+      if (times.easy === PREV_STOCK_TIMES.easy) times.easy = DEFAULT_TIMES.easy;
+      if (times.normal === PREV_STOCK_TIMES.normal) times.normal = DEFAULT_TIMES.normal;
+      if (times.hard === PREV_STOCK_TIMES.hard) times.hard = DEFAULT_TIMES.hard;
+      localStorage.setItem(TIME_VER_KEY, '3');
+      saveTimes(times);
+    }
+    return times;
+  } catch {
+    return { ...DEFAULT_TIMES };
+  }
+}
+
+function saveTimes(times) {
+  localStorage.setItem(TIME_KEY, JSON.stringify(times));
+}
+
+function clampStrikes(n) {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v)) return null;
+  return Math.min(9, Math.max(1, v));
+}
+
+function loadStrikes() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STRIKE_KEY) || '{}');
+    return {
+      easy: clampStrikes(raw.easy) ?? DEFAULT_STRIKES.easy,
+      normal: clampStrikes(raw.normal) ?? DEFAULT_STRIKES.normal,
+      hard: clampStrikes(raw.hard) ?? DEFAULT_STRIKES.hard
+    };
+  } catch {
+    return { ...DEFAULT_STRIKES };
+  }
+}
+
+function saveStrikes(strikes) {
+  localStorage.setItem(STRIKE_KEY, JSON.stringify(strikes));
+}
+
+function fillStrikeSelects() {
+  const strikes = loadStrikes();
+  for (const key of ['easy', 'normal', 'hard']) {
+    const sel = $(`select-strikes-${key}`);
+    sel.innerHTML = STRIKE_OPTIONS.map((n) =>
+      `<option value="${n}">${n} ${n === 1 ? 'strike' : 'strikes'}</option>`
+    ).join('');
+    sel.value = String(strikes[key]);
+  }
+}
+
+function readStrikesFromSelects() {
+  return {
+    easy: Number($('select-strikes-easy').value),
+    normal: Number($('select-strikes-normal').value),
+    hard: Number($('select-strikes-hard').value)
+  };
+}
+
+function strikeLabel(n) {
+  return n === 1 ? '1 strike' : `${n} strikes`;
+}
+
+function fillTimeSelects() {
+  const times = loadTimes();
+  for (const key of ['easy', 'normal', 'hard']) {
+    const sel = $(`select-time-${key}`);
+    sel.innerHTML = TIME_OPTIONS_MS.map((ms) =>
+      `<option value="${ms}">${fmtTime(ms)}</option>`
+    ).join('');
+    sel.value = String(times[key]);
+  }
+}
+
+function readTimesFromSelects() {
+  return {
+    easy: Number($('select-time-easy').value),
+    normal: Number($('select-time-normal').value),
+    hard: Number($('select-time-hard').value)
+  };
+}
+
+function refreshDifficultyLabels() {
+  const times = loadTimes();
+  const strikes = loadStrikes();
+  for (const opt of $('select-difficulty').options) {
+    const copy = DIFF_COPY[opt.value];
+    if (!copy) continue;
+    opt.textContent = `${copy.title} — ${copy.rest} · ${fmtTime(times[opt.value])} · ${strikeLabel(strikes[opt.value])}`;
+  }
+}
+
+function openSettings() {
+  fillTimeSelects();
+  fillStrikeSelects();
+  syncTableHeightSlider();
+  $('select-fly').value = loadFly() ? 'yes' : 'no';
+  $('settings-overlay').classList.remove('hidden');
+}
+
+function closeSettings() {
+  saveTimes(readTimesFromSelects());
+  saveStrikes(readStrikesFromSelects());
+  saveFly($('select-fly').value === 'yes');
+  applyTableHeightFromSlider();
+  refreshDifficultyLabels();
+  $('settings-overlay').classList.add('hidden');
+  // Do not pause/resume the bomb here — table height is a live pref, not a pause action.
+}
+
+function pauseBomb() {
+  if (!state.session || state.menuPaused) return;
+  state.session.pause();
+  state.menuPaused = true;
+}
+
+function resumeBomb() {
+  if (!state.menuPaused || !state.session) {
+    state.menuPaused = false;
+    return;
+  }
+  state.session.resume();
+  state.menuPaused = false;
+}
+
+function loadFly() {
+  return localStorage.getItem(FLY_KEY) === '1';
+}
+
+function saveFly(on) {
+  localStorage.setItem(FLY_KEY, on ? '1' : '0');
+}
+
+function clampTableHeight(m) {
+  const n = Number(m);
+  if (!Number.isFinite(n)) return DEFAULT_TABLE_HEIGHT;
+  return Math.round(Math.min(TABLE_HEIGHT_MAX, Math.max(TABLE_HEIGHT_MIN, n)) * 100) / 100;
+}
+
+function loadTableHeight() {
+  return clampTableHeight(localStorage.getItem(TABLE_HEIGHT_KEY) ?? DEFAULT_TABLE_HEIGHT);
+}
+
+function saveTableHeight(m) {
+  localStorage.setItem(TABLE_HEIGHT_KEY, String(clampTableHeight(m)));
+}
+
+function fmtTableHeight(m) {
+  return `${Math.round(clampTableHeight(m) * 100)} cm`;
+}
+
+function syncTableHeightSlider() {
+  const input = $('input-table-height');
+  const label = $('table-height-label');
+  if (!input) return;
+  const cm = Math.round(loadTableHeight() * 100);
+  input.value = String(cm);
+  if (label) label.textContent = `${cm} cm`;
+}
+
+function applyTableHeightFromSlider() {
+  const input = $('input-table-height');
+  if (!input) return loadTableHeight();
+  const meters = clampTableHeight(Number(input.value) / 100);
+  saveTableHeight(meters);
+  if (state.scene3d) state.scene3d.setTableHeight(meters);
+  const label = $('table-height-label');
+  if (label) label.textContent = fmtTableHeight(meters);
+  return meters;
+}
+
+function loadStats() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STATS_KEY) || '{}');
+    if (!s.gamesPlayed) return;
+    $('stats-panel').classList.remove('hidden');
+    $('stats-grid').innerHTML = [
+      [s.gamesPlayed, 'GAMES'],
+      [s.wins, 'WINS'],
+      [s.losses, 'LOSSES'],
+      [s.totalStrikes, 'STRIKES'],
+      [s.modulesSolved, 'DEFUSED'],
+      [s.fastestWinMs ? fmtTime(s.fastestWinMs) : '—', 'BEST TIME']
+    ].map(([v, l]) => `<div class="stat-cell"><b>${v}</b><span>${l}</span></div>`).join('');
+  } catch { /* ignore */ }
+}
+loadStats();
+
+function recordStats(summary) {
+  const s = JSON.parse(localStorage.getItem(STATS_KEY) || '{}');
+  const base = {
+    gamesPlayed: 0, wins: 0, losses: 0, totalStrikes: 0,
+    modulesSolved: 0, fastestWinMs: null, ...s
+  };
+  base.gamesPlayed++;
+  base.totalStrikes += summary.strikes;
+  base.modulesSolved += summary.modulesSolved;
+  if (summary.result === 'won') {
+    base.wins++;
+    if (base.fastestWinMs === null || summary.durationMs < base.fastestWinMs) {
+      base.fastestWinMs = summary.durationMs;
+    }
+  } else {
+    base.losses++;
+  }
+  localStorage.setItem(STATS_KEY, JSON.stringify(base));
+  loadStats();
+}
+
+function isInstalledPwa() {
+  // Meta Quest: present only inside the packaged Alpha/Store TWA (not Browser tabs).
+  return 'getDigitalGoodsService' in window;
+}
+
+function isQuestOrInstalledPwa() {
+  const ua = navigator.userAgent || '';
+  return (
+    isInstalledPwa() ||
+    /OculusBrowser|Quest|Mobile VR/i.test(ua)
+  );
+}
+
+detectXRSupport().then(({ supported, vr, ar }) => {
+  state.xrSupported = supported;
+  state.xrVr = !!vr;
+  state.xrAr = !!ar;
+  const badge = $('xr-status');
+  const onQuest = isQuestOrInstalledPwa();
+  if (badge) {
+    if (vr && ar) {
+      badge.textContent = 'WebXR ready — tap START IN VR or START IN AR.';
+    } else if (vr) {
+      badge.textContent = 'WebXR ready — tap START IN VR.';
+    } else if (ar) {
+      badge.textContent = 'WebXR AR ready — tap START IN AR.';
+    } else if (isInstalledPwa()) {
+      badge.textContent =
+        'Alpha 2D panel — WebXR usually blocked here. For VR: open the same site in Quest Browser, or use the offline APK (local browser).';
+    } else if (onQuest) {
+      badge.textContent = 'Quest Browser — tap START IN VR / AR (trigger to click).';
+    } else {
+      badge.textContent = 'WebXR not detected here — use START ON SCREEN, or Quest Browser over HTTPS.';
+    }
+  }
+  const btnVr = $('btn-start-vr');
+  const btnAr = $('btn-start-ar');
+  // Never grey-out VR/AR on Quest / installed PWA — disabled buttons ignore the laser pointer.
+  if (btnVr) {
+    btnVr.disabled = onQuest ? false : !vr;
+    if (!vr && !onQuest) btnVr.title = 'Requires Meta Quest Browser over HTTPS with immersive-vr';
+  }
+  if (btnAr) {
+    btnAr.disabled = onQuest ? false : !ar;
+    if (!ar && !onQuest) btnAr.title = 'Requires Quest Browser passthrough (Quest 3 / 3S / Pro) over HTTPS';
+  }
+  // Warm WebGL + XR on Quest so the first button press can requestSession immediately.
+  if (onQuest) {
+    try {
+      ensureScene();
+    } catch (err) {
+      console.warn('[XR] scene warm-up failed', err);
+    }
+  }
+});
+
+// Alpha / Store immersive installs: icon tap IS the user activation — request
+// WebXR on load (Meta PWA docs). 2D-mode APKs cannot start immersive-vr at all.
+// Quest Browser keeps the on-screen START IN VR / AR buttons.
+
+async function launchInstalledPwaIntoVr() {
+  if (!isInstalledPwa()) return false;
+  if ($('xr-status')) {
+    $('xr-status').textContent = 'Installed Alpha app — entering VR…';
+  }
+  if ($('home-error')) $('home-error').textContent = 'Entering VR…';
+
+  // Attach the early requestSession FIRST (already fired from index.html),
+  // then build the bomb — otherwise Horizon never leaves the loading spinner.
+  const scene = ensureScene();
+  try {
+    await scene.enterXR('vr');
+    sound.unlock();
+  } catch (err) {
+    const msg = err?.message || String(err);
+    if ($('home-error')) {
+      $('home-error').textContent =
+        `VR boot failed: ${msg}. Fully quit the app and relaunch with Wi‑Fi.`;
+    }
+    console.error('[XR] installed PWA auto-enter failed', err);
+    return false;
+  }
+
+  await startMission({ enterVr: false, xrMode: 'vr' });
+  // Mission started on flat screen path; we are already presenting — sync flags.
+  state.lastEnterVr = true;
+  state.lastXrMode = 'vr';
+  syncEnterXrButton(true, 'vr');
+  if ($('scene-hint')) {
+    $('scene-hint').textContent =
+      'VR · Trigger = interact · Y = menu · Left stick = move · Right stick = snap turn';
+  }
+  if ($('home-error')) $('home-error').textContent = '';
+  return true;
+}
+
+function syncEnterXrButton(presenting, mode) {
+  const btn = $('btn-enter-vr');
+  if (!btn) return;
+  if (presenting) {
+    btn.textContent = mode === 'ar' ? 'EXIT AR' : 'EXIT VR';
+  } else if (state.lastXrMode === 'ar' && state.xrAr) {
+    btn.textContent = 'ENTER AR';
+  } else {
+    btn.textContent = 'ENTER VR';
+  }
+}
+
+function ensureScene() {
+  if (!state.scene3d) {
+    state.scene3d = createDeviceScene($('scene-container'), getQuality());
+    state.scene3d.onXRChange = (presenting, mode) => {
+      document.body.classList.toggle('xr-presenting', presenting);
+      document.body.classList.toggle('xr-ar-presenting', presenting && mode === 'ar');
+      syncEnterXrButton(presenting, mode);
+    };
+    state.scene3d.onFlyChange = ({ landed, squashed }) => {
+      if (state.session?.game) state.session.game._fly(landed && !squashed);
+      if (squashed) sound.squish();
+    };
+    state.scene3d.onFlyAudio = (args) => sound.flyAudio(args);
+    state.scene3d.onFanChange = (on) => sound.fanHum(on);
+    state.scene3d.onSystemMenu = handleSystemMenu;
+    state.scene3d.getVrSettings = () => ({
+      times: loadTimes(),
+      strikes: loadStrikes(),
+      fly: loadFly(),
+      tableHeight: loadTableHeight(),
+      timeOptions: TIME_OPTIONS_MS,
+      strikeOptions: STRIKE_OPTIONS,
+      tableHeightOptions: TABLE_HEIGHT_OPTIONS
+    });
+    state.scene3d.onVrSettings = applyVrSettings;
+    state.scene3d.setTableHeight(loadTableHeight());
+  } else {
+    state.scene3d.setQuality(getQuality());
+    state.scene3d.setTableHeight(loadTableHeight());
+  }
+  return state.scene3d;
+}
+
+function applyVrSettings(next) {
+  if (next.times) saveTimes(next.times);
+  if (next.strikes) saveStrikes(next.strikes);
+  if (typeof next.fly === 'boolean') saveFly(next.fly);
+  if (next.tableHeight != null) saveTableHeight(next.tableHeight);
+  fillTimeSelects();
+  fillStrikeSelects();
+  syncTableHeightSlider();
+  $('select-fly').value = loadFly() ? 'yes' : 'no';
+  refreshDifficultyLabels();
+
+  if (state.scene3d) {
+    state.scene3d.setFlyEnabled(loadFly());
+    state.scene3d.setTableHeight(loadTableHeight());
+  }
+  if (state.session?.game && next.strikes) {
+    const diff = state.session.game.difficulty;
+    const max = next.strikes[diff];
+    if (Number.isFinite(max)) {
+      state.session.game.config.maxStrikes = max;
+      updateStrikes(state.session.game.strikes, max);
+    }
+  }
+}
+
+function handleSystemMenu(action) {
+  if (action === 'pause') pauseBomb();
+  else if (action === 'resume') resumeBomb();
+  else if (action === 'mainMenu') {
+    setSeedField('');
+    returnToMenu();
+  }
+}
+
+async function startMission({ enterVr = false, xrMode = 'vr', seed } = {}) {
+  persistPrefs();
+  state.menuPaused = false;
+  closeSettings();
+
+  const mode = xrMode === 'ar' ? 'ar' : 'vr';
+  const label = mode === 'ar' ? 'AR' : 'VR';
+  state.lastEnterVr = !!enterVr;
+  state.lastXrMode = mode;
+
+  // Quest 2D panel: request WebXR FIRST while the trigger/click gesture is still
+  // valid. Building the bomb first expires user-activation → looks like "can't click".
+  // Pre-create the scene on menu load when possible; here we only ensure it exists.
+  const scene = ensureScene();
+  if (enterVr) {
+    if ($('home-error')) $('home-error').textContent = `Starting ${label}…`;
+    try {
+      // enterXR must be the first await — sound.unlock after would be too late anyway.
+      await scene.enterXR(mode);
+      sound.unlock();
+    } catch (err) {
+      const raw = err?.message || String(err);
+      const looksUnsupported = /not supported/i.test(raw);
+      const msg = looksUnsupported
+        ? `${raw} — WebXR is blocked in this Alpha panel. Use Quest Browser on the live site, or the offline APK (local browser → START IN VR). Do not upload immersive Bubblewrap — it hangs on loading.`
+        : `${raw}. If Quest showed a settings toast, allow immersive VR, then try again.`;
+      if ($('home-error')) $('home-error').textContent = `${label} blocked: ${msg}`;
+      console.error(`[XR] ${label} start failed`, err);
+      return;
+    }
+  } else if ($('home-error')) {
+    $('home-error').textContent = '';
+  }
+
+  if (state.session) {
+    state.session.destroy();
+    state.session = null;
+  }
+
+  sound.unlock();
+  const missionSeed = (() => {
+    const raw = seed !== undefined ? seed : getSeed();
+    return String(raw || '').trim() || undefined;
+  })();
+
+  const session = startSoloGame({
+    difficulty: getDifficulty(),
+    seed: missionSeed,
+    timeMs: loadTimes()[getDifficulty()],
+    maxStrikes: loadStrikes()[getDifficulty()],
+    onTick: ({ remainingMs }) => {
+      updateTimer(remainingMs);
+      if (state.scene3d) state.scene3d.setTimer(remainingMs);
+    },
+    onStrike: ({ strikes, maxStrikes }) => {
+      sound.strike();
+      updateStrikes(strikes, maxStrikes);
+      if (state.scene3d) {
+        state.scene3d.setStrikes(strikes);
+        state.scene3d.strikeFx();
+      }
+      flashStrike();
+    },
+    onModuleUpdate: ({ moduleId, view }) => {
+      if (state.scene3d) state.scene3d.updateModule(moduleId, view);
+    },
+    onModuleSolved: ({ moduleId, solvedCount }) => {
+      sound.solve();
+      if (state.scene3d) state.scene3d.markSolved(moduleId);
+      updateSolved(solvedCount, state.game?.modules?.length || 0);
+    },
+    onGameOver: handleGameOver
+  });
+
+  state.session = session;
+  state.game = session.payload;
+  state.lastSeed = session.payload.seed;
+  state.lastSecond = null;
+
+  $('hud-seed').textContent = session.payload.seed;
+  updateStrikes(session.payload.strikes, session.payload.maxStrikes);
+  updateTimer(session.payload.timeMs);
+
+  scene.startGame(session.payload, (moduleId, action) => {
+    sound.click();
+    session.handleAction(moduleId, action);
+  }, { fly: loadFly() });
+  updateSolved(0, session.payload.modules.length);
+
+  show('game');
+  syncEnterXrButton(!!enterVr, mode);
+  if (enterVr) {
+    $('scene-hint').textContent = mode === 'ar'
+      ? 'AR · Timer paused until you TRIGGER LOCK the table · Y = menu (MOVE BOMB)'
+      : 'VR · Trigger = interact · Y = menu · Left stick = move · Right stick = snap turn';
+    if (mode === 'ar') pauseBomb();
+    if ($('home-error')) $('home-error').textContent = '';
+  } else {
+    $('scene-hint').textContent =
+      'DRAG to orbit · CLICK to interact · ENTER VR / AR when ready · read serial on case front';
+  }
+}
+
+function flashStrike() {
+  const flash = $('strike-flash');
+  flash.classList.remove('go');
+  void flash.offsetWidth;
+  flash.classList.add('go');
+}
+
+function bindActivate(el, fn) {
+  if (!el) return;
+  let last = 0;
+  const run = () => {
+    const now = Date.now();
+    if (now - last < 500) return;
+    last = now;
+    // Sync call — WebXR needs the click gesture still active (no preventDefault / microtask).
+    if ($('home-error')) $('home-error').textContent = 'Button pressed…';
+    fn();
+  };
+  el.addEventListener('click', run);
+  el.addEventListener('pointerup', run);
+}
+
+bindActivate($('btn-start'), () => startMission({ enterVr: false }));
+bindActivate($('btn-start-vr'), () => startMission({ enterVr: true, xrMode: 'vr' }));
+bindActivate($('btn-start-ar'), () => startMission({ enterVr: true, xrMode: 'ar' }));
+$('btn-settings')?.addEventListener('click', openSettings);
+$('btn-settings-done')?.addEventListener('click', closeSettings);
+$('btn-settings-reset')?.addEventListener('click', () => {
+  saveTimes({ ...DEFAULT_TIMES });
+  saveStrikes({ ...DEFAULT_STRIKES });
+  saveFly(false);
+  saveTableHeight(DEFAULT_TABLE_HEIGHT);
+  fillTimeSelects();
+  fillStrikeSelects();
+  syncTableHeightSlider();
+  $('select-fly').value = 'no';
+  if (state.scene3d) state.scene3d.setTableHeight(DEFAULT_TABLE_HEIGHT);
+  refreshDifficultyLabels();
+});
+$('settings-overlay')?.addEventListener('click', (e) => {
+  if (e.target === $('settings-overlay')) closeSettings();
+});
+
+$('btn-enter-vr')?.addEventListener('click', async () => {
+  sound.unlock();
+  const scene = state.scene3d;
+  if (!scene) return;
+  try {
+    if (scene.isXRPresenting()) {
+      scene.exitVR();
+      return;
+    }
+    let mode = state.lastXrMode === 'ar' ? 'ar' : 'vr';
+    if (mode === 'ar' && !state.xrAr) mode = 'vr';
+    if (mode === 'vr' && !state.xrVr && state.xrAr) mode = 'ar';
+    state.lastXrMode = mode;
+    if (mode === 'ar') pauseBomb();
+    await scene.enterXR(mode);
+  } catch (err) {
+    if (state.lastXrMode === 'ar') resumeBomb();
+    alert(`Could not start headset mode:\n${err.message}`);
+  }
+});
+
+function updateTimer(ms) {
+  const el = $('hud-timer');
+  el.textContent = fmtTime(ms);
+  const low = ms < 60 * 1000;
+  el.classList.toggle('low', low);
+  const sec = Math.ceil(ms / 1000);
+  if (sec !== state.lastSecond) {
+    state.lastSecond = sec;
+    if (low && sec > 0) sound.tickLow();
+  }
+}
+
+function updateStrikes(strikes, max) {
+  $('hud-strikes').textContent = '✖'.repeat(strikes) + '·'.repeat(Math.max(0, max - strikes));
+}
+
+function updateSolved(done, total) {
+  $('hud-solved').textContent = `${done}/${total}`;
+}
+
+function handleGameOver(summary) {
+  recordStats(summary);
+  const won = summary.result === 'won';
+  won ? sound.win() : sound.lose();
+  state.lastSeed = summary.seed;
+  if (state.scene3d) {
+    if (state.scene3d.isXRPresenting()) state.scene3d.exitVR();
+    state.scene3d.gameOver(won);
+  }
+
+  $('end-title').textContent = won ? 'DEVICE DEFUSED' : 'DETONATION';
+  $('end-title').className = won ? 'win' : 'loss';
+  $('end-reason').textContent = won
+    ? `All modules neutralized with ${fmtTime(summary.timeRemainingMs)} to spare.`
+    : (summary.reason === 'strikes'
+      ? 'Strike limit reached. The device detonated.'
+      : 'Timer expired. The device detonated.');
+
+  $('end-summary').innerHTML = [
+    [summary.modulesSolved + '/' + summary.modulesTotal, 'MODULES'],
+    [summary.strikes, 'STRIKES'],
+    [fmtTime(summary.durationMs), 'DURATION'],
+    [summary.difficulty.toUpperCase(), 'DIFFICULTY'],
+    [summary.seed, 'SEED']
+  ].map(([v, l]) => `<div class="stat-cell"><b>${v}</b><span>${l}</span></div>`).join('');
+
+  setTimeout(() => show('end'), won ? 900 : 1400);
+}
+
+$('btn-seed-reset')?.addEventListener('click', () => setSeedField(''));
+
+$('btn-restart-bomb')?.addEventListener('click', () => {
+  if (!state.lastSeed) return;
+  setSeedField(state.lastSeed);
+  startMission({
+    enterVr: state.lastEnterVr,
+    xrMode: state.lastXrMode,
+    seed: state.lastSeed
+  });
+});
+
+$('btn-new-bomb')?.addEventListener('click', () => {
+  setSeedField('');
+  startMission({
+    enterVr: state.lastEnterVr,
+    xrMode: state.lastXrMode,
+    seed: ''
+  });
+});
+
+$('btn-back-home')?.addEventListener('click', () => {
+  setSeedField('');
+  returnToMenu();
+});
+
+// Do NOT auto-enter VR here. Immersive Alpha packages hang on Meta's three-dot
+// loader if requestSession fails; 2D Alpha packages show the home panel instead
+// (same "browser window then click VR" flow as other classroom Quest web games).
+// Keep launchInstalledPwaIntoVr() for a future immersive APK once Meta dashboard
+// shows Quest as supported and Digital Asset Links verify cleanly.
