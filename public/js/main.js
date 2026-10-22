@@ -2,8 +2,8 @@
  * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
  * Teammates use manual.html on another device; no multiplayer in-app.
  */
-import { createDeviceScene } from './three/scene.js?v=20261021a';
-import { detectXRSupport } from './three/xr.js?v=20261021a';
+import { createDeviceScene } from './three/scene.js?v=20261022b';
+import { detectXRSupport } from './three/xr.js?v=20261022b';
 import { sound } from './sound.js';
 import { startSoloGame } from './solo/engine.js';
 
@@ -377,15 +377,30 @@ detectXRSupport().then(({ supported, vr, ar }) => {
     if (!ar) btnAr.title = 'Requires Quest Browser passthrough (Quest 3 / 3S / Pro) over HTTPS';
   }
 
-  // Meta App Lab / immersive WebXR PWA: Digital Goods means we launched from the
-  // packaged app icon — enter VR automatically (Meta's recommended launch UX).
-  // Regular Quest Browser and desktop keep the home screen.
-  const isAppLabPwa = typeof window.getDigitalGoodsService === 'function';
-  if (isAppLabPwa && vr && !state.session) {
-    if (badge) badge.textContent = 'App Lab PWA — starting immersive VR…';
-    startMission({ enterVr: true, xrMode: 'vr' });
-  }
 });
+
+/**
+ * Immersive Horizon PWA (Alpha/Store install): icon tap is the user activation.
+ * Call requestSession ASAP — waiting on UI work can expire the gesture and leave
+ * a black immersive shell (Meta: horizonOSAppMode immersive waiting for WebXR).
+ */
+async function launchInstalledPwaVr() {
+  if (!('getDigitalGoodsService' in window)) return;
+  if (!navigator.xr?.isSessionSupported) return;
+  if (state.session) return;
+  try {
+    const ok = await navigator.xr.isSessionSupported('immersive-vr');
+    if (!ok) return;
+  } catch {
+    return;
+  }
+  const badge = $('xr-status');
+  if (badge) badge.textContent = 'Installed PWA — starting immersive VR…';
+  startMission({ enterVr: true, xrMode: 'vr' });
+}
+
+// Kick off immediately (do not wait for detectXRSupport UI).
+void launchInstalledPwaVr();
 
 function syncEnterXrButton(presenting, mode) {
   const btn = $('btn-enter-vr');
@@ -548,8 +563,14 @@ function startMission({ enterVr = false, xrMode = 'vr', seed } = {}) {
   if (enterVr) {
     const label = mode === 'ar' ? 'AR' : 'VR';
     scene.enterXR(mode).catch((err) => {
-      $('home-error').textContent = err.message;
-      alert(`Could not start ${label}:\n${err.message}\n\nUse Meta Quest Browser over HTTPS.`);
+      const msg = err?.message || String(err);
+      if ($('home-error')) $('home-error').textContent = msg;
+      if ($('scene-hint')) {
+        $('scene-hint').textContent =
+          `${label} failed: ${msg} — open in Quest Browser or tap ENTER VR`;
+      }
+      // Alerts often don't show inside immersive PWA shells.
+      console.error(`[XR] ${label} start failed`, err);
       if (mode === 'ar') resumeBomb();
     });
   }

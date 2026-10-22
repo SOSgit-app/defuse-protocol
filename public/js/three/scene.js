@@ -13,12 +13,12 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
 import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { Device } from './device.js?v=20261014c';
+import { Device } from './device.js?v=20261022a';
 import { createFly } from './fly.js';
 import { createDeskFan } from './fan.js';
-import { attachXR } from './xr.js?v=20261014c';
-import { createPauseMenu } from './pauseMenu.js?v=20261014c';
-import { createArPlacement } from './arPlacement.js?v=20261014c';
+import { attachXR } from './xr.js?v=20261022a';
+import { createPauseMenu } from './pauseMenu.js?v=20261022a';
+import { createArPlacement } from './arPlacement.js?v=20261022a';
 
 export function createDeviceScene(container, initialQuality = 'medium') {
   /* ---------- renderer (XR-compatible; alpha for AR passthrough) ---------- */

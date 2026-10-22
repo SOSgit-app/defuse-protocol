@@ -279,6 +279,8 @@ export function attachXR({
     const gl = renderer.getContext();
     if (gl && gl.makeXRCompatible) await gl.makeXRCompatible();
 
+    // Prefer local-floor (Quest PWA / Browser). Avoid requiring bounded-floor —
+    // that reference space has caused black-void sessions on Quest Browser.
     const sessionInit = mode === 'ar'
       ? {
           requiredFeatures: ['local-floor'],
@@ -286,13 +288,13 @@ export function attachXR({
             'plane-detection',
             'hit-test',
             'anchors',
-            'bounded-floor',
             'hand-tracking',
             'layers'
           ]
         }
       : {
-          optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers', 'anchors']
+          requiredFeatures: ['local-floor'],
+          optionalFeatures: ['hand-tracking', 'layers', 'anchors']
         };
     currentMode = mode === 'ar' ? 'ar' : 'vr';
     try {
