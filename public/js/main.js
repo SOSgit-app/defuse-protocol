@@ -2,8 +2,8 @@
  * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
  * Teammates use manual.html on another device; no multiplayer in-app.
  */
-import { createDeviceScene } from './three/scene.js?v=20261022c';
-import { detectXRSupport } from './three/xr.js?v=20261022c';
+import { createDeviceScene } from './three/scene.js?v=20261022d';
+import { detectXRSupport } from './three/xr.js?v=20261022d';
 import { sound } from './sound.js';
 import { startSoloGame } from './solo/engine.js';
 
@@ -350,33 +350,45 @@ function recordStats(summary) {
   loadStats();
 }
 
+function isQuestOrInstalledPwa() {
+  const ua = navigator.userAgent || '';
+  return (
+    'getDigitalGoodsService' in window ||
+    /OculusBrowser|Quest|Mobile VR/i.test(ua)
+  );
+}
+
 detectXRSupport().then(({ supported, vr, ar }) => {
   state.xrSupported = supported;
   state.xrVr = !!vr;
   state.xrAr = !!ar;
   const badge = $('xr-status');
+  const onQuest = isQuestOrInstalledPwa();
   if (badge) {
     if (vr && ar) {
-      badge.textContent = 'WebXR ready — VR or AR passthrough on Quest (HTTPS required).';
+      badge.textContent = 'WebXR ready — tap START IN VR or START IN AR.';
     } else if (vr) {
-      badge.textContent = 'WebXR ready — START IN VR (HTTPS required). AR not available here.';
+      badge.textContent = 'WebXR ready — tap START IN VR.';
     } else if (ar) {
-      badge.textContent = 'WebXR AR ready — START IN AR (HTTPS required).';
+      badge.textContent = 'WebXR AR ready — tap START IN AR.';
+    } else if (onQuest) {
+      // 2D Horizon panels sometimes report no XR until you tap — keep buttons usable.
+      badge.textContent = 'Quest panel — tap START IN VR / AR (trigger to click).';
     } else {
       badge.textContent = 'WebXR not detected here — use START ON SCREEN, or Quest Browser over HTTPS.';
     }
   }
   const btnVr = $('btn-start-vr');
   const btnAr = $('btn-start-ar');
+  // Never grey-out VR/AR on Quest / installed PWA — disabled buttons ignore the laser pointer.
   if (btnVr) {
-    btnVr.disabled = !vr;
-    if (!vr) btnVr.title = 'Requires Meta Quest Browser over HTTPS with immersive-vr';
+    btnVr.disabled = onQuest ? false : !vr;
+    if (!vr && !onQuest) btnVr.title = 'Requires Meta Quest Browser over HTTPS with immersive-vr';
   }
   if (btnAr) {
-    btnAr.disabled = !ar;
-    if (!ar) btnAr.title = 'Requires Quest Browser passthrough (Quest 3 / 3S / Pro) over HTTPS';
+    btnAr.disabled = onQuest ? false : !ar;
+    if (!ar && !onQuest) btnAr.title = 'Requires Quest Browser passthrough (Quest 3 / 3S / Pro) over HTTPS';
   }
-
 });
 
 // Alpha / Store installs use horizonOSAppMode "2D" so the home UI appears in a
@@ -564,9 +576,31 @@ function flashStrike() {
   flash.classList.add('go');
 }
 
-$('btn-start')?.addEventListener('click', () => startMission({ enterVr: false }));
-$('btn-start-vr')?.addEventListener('click', () => startMission({ enterVr: true, xrMode: 'vr' }));
-$('btn-start-ar')?.addEventListener('click', () => startMission({ enterVr: true, xrMode: 'ar' }));
+function bindActivate(el, fn) {
+  if (!el) return;
+  let last = 0;
+  const run = (e) => {
+    const now = Date.now();
+    if (now - last < 450) return;
+    last = now;
+    e.preventDefault();
+    e.stopPropagation();
+    fn();
+  };
+  el.addEventListener('click', run);
+  // Quest 2D panel laser sometimes delivers pointerup more reliably than click.
+  el.addEventListener('pointerup', run);
+}
+
+bindActivate($('btn-start'), () => startMission({ enterVr: false }));
+bindActivate($('btn-start-vr'), () => {
+  if ($('home-error')) $('home-error').textContent = '';
+  startMission({ enterVr: true, xrMode: 'vr' });
+});
+bindActivate($('btn-start-ar'), () => {
+  if ($('home-error')) $('home-error').textContent = '';
+  startMission({ enterVr: true, xrMode: 'ar' });
+});
 $('btn-settings')?.addEventListener('click', openSettings);
 $('btn-settings-done')?.addEventListener('click', closeSettings);
 $('btn-settings-reset')?.addEventListener('click', () => {

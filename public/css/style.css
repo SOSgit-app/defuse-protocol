@@ -177,14 +177,22 @@ body {
 @media (max-width: 420px) {
   .settings-grid { grid-template-columns: 1fr; }
 }
-.home-actions { display: flex; flex-direction: column; gap: 12px; }
+.home-actions { display: flex; flex-direction: column; gap: 14px; }
 .home-actions .primary { width: 100%; }
 .home-actions .ghost {
   display: block; text-align: center; text-decoration: none;
   margin-top: 0; border: 1px dashed var(--line);
 }
+.home-actions .btn,
+.home-actions button {
+  min-height: 52px;
+  font-size: 1rem;
+  touch-action: manipulation;
+  cursor: pointer;
+}
 .home-actions button:disabled {
   opacity: 0.45; cursor: not-allowed;
+  pointer-events: none;
 }
 .join-row { display: flex; gap: 8px; }
 .join-row input { text-transform: uppercase; letter-spacing: 0.3em; flex: 1; }
