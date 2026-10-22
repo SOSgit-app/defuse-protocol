@@ -276,6 +276,29 @@ export function attachXR({
     if (!navigator.xr) throw new Error('WebXR not available in this browser.');
     const sessionMode = mode === 'ar' ? 'immersive-ar' : 'immersive-vr';
 
+    // Installed immersive PWA: index.html already called requestSession on icon-tap.
+    // Attach that session so Horizon leaves the loading spinner.
+    const early = typeof window !== 'undefined' ? window.__defuseEarlyXr : null;
+    if (mode !== 'ar' && early && (early.session || early.promise)) {
+      currentMode = 'vr';
+      try {
+        const session = early.session || (await early.promise);
+        early.promise = null;
+        early.session = null;
+        if (session) {
+          await renderer.xr.setSession(session);
+          return;
+        }
+        if (early.error) throw early.error;
+      } catch (err) {
+        currentMode = null;
+        early.promise = null;
+        early.session = null;
+        // Fall through and try a fresh requestSession (Browser / retry).
+        console.warn('[XR] early session attach failed, retrying', err);
+      }
+    }
+
     // Prefer local-floor (Quest PWA / Browser). Avoid requiring bounded-floor —
     // that reference space has caused black-void sessions on Quest Browser.
     // CRITICAL: call requestSession synchronously from the user gesture — do NOT

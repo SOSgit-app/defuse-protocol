@@ -9,6 +9,33 @@
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-512.png" />
   <link rel="stylesheet" href="css/style.css" />
+  <!-- Immersive Alpha/Store: icon tap = user activation. Must requestSession BEFORE
+       ES modules / CDN Three.js load, or Horizon stays on the loading spinner forever. -->
+  <script>
+    (function () {
+      window.__defuseEarlyXr = { promise: null, session: null, error: null };
+      if (!('getDigitalGoodsService' in window) || !navigator.xr || !navigator.xr.requestSession) {
+        return;
+      }
+      var optional = ['local-floor', 'hand-tracking', 'layers', 'anchors'];
+      function request(init) {
+        return navigator.xr.requestSession('immersive-vr', init);
+      }
+      window.__defuseEarlyXr.promise = request({
+        requiredFeatures: ['local-floor'],
+        optionalFeatures: optional
+      }).catch(function () {
+        return request({ optionalFeatures: optional });
+      }).then(function (session) {
+        window.__defuseEarlyXr.session = session;
+        return session;
+      }).catch(function (err) {
+        window.__defuseEarlyXr.error = err;
+        console.error('[XR] early requestSession failed', err);
+        return null;
+      });
+    })();
+  </script>
 </head>
 <body>
   <!-- ============ HOME ============ -->
@@ -175,6 +202,6 @@
       }
     }
   </script>
-  <script type="module" src="js/main.js?v=20261022g"></script>
+  <script type="module" src="js/main.js?v=20261022h"></script>
 </body>
 </html>

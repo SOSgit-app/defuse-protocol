@@ -2,8 +2,8 @@
  * DEFUSE PROTOCOL — solo VR defuser client (static / Quest Browser).
  * Teammates use manual.html on another device; no multiplayer in-app.
  */
-import { createDeviceScene } from './three/scene.js?v=20261022g';
-import { detectXRSupport } from './three/xr.js?v=20261022g';
+import { createDeviceScene } from './three/scene.js?v=20261022h';
+import { detectXRSupport } from './three/xr.js?v=20261022h';
 import { sound } from './sound.js';
 import { startSoloGame } from './solo/engine.js';
 
@@ -414,13 +414,34 @@ async function launchInstalledPwaIntoVr() {
     $('xr-status').textContent = 'Installed Alpha app — entering VR…';
   }
   if ($('home-error')) $('home-error').textContent = 'Entering VR…';
-  await startMission({ enterVr: true, xrMode: 'vr' });
-  const ok = !!(state.scene3d && state.scene3d.isXRPresenting());
-  if (!ok && $('home-error') && !$('home-error').textContent) {
-    $('home-error').textContent =
-      'Could not enter VR. Need Alpha APK 1.0.3+ with immersive mode (2D builds block WebXR).';
+
+  // Attach the early requestSession FIRST (already fired from index.html),
+  // then build the bomb — otherwise Horizon never leaves the loading spinner.
+  const scene = ensureScene();
+  try {
+    await scene.enterXR('vr');
+    sound.unlock();
+  } catch (err) {
+    const msg = err?.message || String(err);
+    if ($('home-error')) {
+      $('home-error').textContent =
+        `VR boot failed: ${msg}. Fully quit the app and relaunch with Wi‑Fi.`;
+    }
+    console.error('[XR] installed PWA auto-enter failed', err);
+    return false;
   }
-  return ok;
+
+  await startMission({ enterVr: false, xrMode: 'vr' });
+  // Mission started on flat screen path; we are already presenting — sync flags.
+  state.lastEnterVr = true;
+  state.lastXrMode = 'vr';
+  syncEnterXrButton(true, 'vr');
+  if ($('scene-hint')) {
+    $('scene-hint').textContent =
+      'VR · Trigger = interact · Y = menu · Left stick = move · Right stick = snap turn';
+  }
+  if ($('home-error')) $('home-error').textContent = '';
+  return true;
 }
 
 function syncEnterXrButton(presenting, mode) {
