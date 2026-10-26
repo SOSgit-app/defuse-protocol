@@ -16,9 +16,9 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Device } from './device.js?v=20261022a';
 import { createFly } from './fly.js';
 import { createDeskFan } from './fan.js';
-import { attachXR } from './xr.js?v=20261022j';
+import { attachXR } from './xr.js?v=20261022k';
 import { createPauseMenu } from './pauseMenu.js?v=20261022a';
-import { createArPlacement } from './arPlacement.js?v=20261022a';
+import { createArPlacement } from './arPlacement.js?v=20261022k';
 
 export function createDeviceScene(container, initialQuality = 'medium') {
   /* ---------- renderer (XR-compatible; alpha for AR passthrough) ---------- */
@@ -260,8 +260,10 @@ export function createDeviceScene(container, initialQuality = 'medium') {
       stage.position.y = 0;
       return;
     }
-    // VR: fixed table height from settings. AR placement owns Y while active.
-    if (xrMode === 'vr') stage.position.y = tableHeight;
+    // Only snap Y when not mid grip-grab (player may have moved the table).
+    if (xrMode === 'vr' && !arPlace.isGrabbing()) {
+      stage.position.y = tableHeight;
+    }
   }
 
   function applyPassthroughVisuals(on) {
@@ -431,6 +433,7 @@ export function createDeviceScene(container, initialQuality = 'medium') {
     },
     onMenuButton: openPauseMenu,
     isMenuOpen: () => pauseMenu.open || arPlace.isPlacing(),
+    isGrabbing: () => arPlace.isGrabbing(),
     onSessionStart: (mode) => {
       xrMode = mode === 'ar' ? 'ar' : 'vr';
       qualityBeforeVR = currentQuality;
@@ -439,20 +442,22 @@ export function createDeviceScene(container, initialQuality = 'medium') {
       applyPassthroughVisuals(xrMode === 'ar');
       camera.position.set(0, 0, 0);
       dolly.rotation.set(0, 0, 0);
+      arPlace.setDefaultHeight(tableHeight);
       if (xrMode === 'ar') {
         dolly.position.set(0, 0, 0);
-        arPlace.setDefaultHeight(tableHeight);
         arPlace.begin();
         pauseMenu.setRepositionVisible(true);
         // Freeze the timer while the player places / sizes the table.
         api.onSystemMenu?.('pause');
       } else {
         dolly.position.set(0, 0, 1.35);
-        arPlace.end();
-        pauseMenu.setRepositionVisible(false);
         stage.position.set(0, tableHeight, 0);
         stage.rotation.set(0, 0, 0);
         stage.scale.setScalar(1);
+        // VR: free dual-grip move/scale anytime (no lock step).
+        arPlace.attachSession();
+        // MOVE BOMB is AR stick-setup; VR uses grips anytime.
+        pauseMenu.setRepositionVisible(false);
       }
       document.body.classList.add('xr-presenting');
       document.body.classList.toggle('xr-ar-presenting', xrMode === 'ar');
@@ -507,10 +512,11 @@ export function createDeviceScene(container, initialQuality = 'medium') {
     if (!presenting && container.offsetParent === null) return;
 
     if (!presenting) controls.update();
-    xr.tick(dt);
-    if (presenting && xrMode === 'ar') {
+    if (presenting) {
+      arPlace.setMenuBlocked(pauseMenu.open);
       arPlace.tick(dt);
     }
+    xr.tick(dt);
     if (pauseMenu.open) placePauseMenu();
     if (device) device.tick(dt, t);
     fan.tick(dt);

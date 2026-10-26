@@ -7,6 +7,8 @@
     "init": "node scripts/init-bubblewrap.mjs",
     "update": "node scripts/run-bubblewrap.mjs update",
     "build": "node scripts/run-bubblewrap.mjs build",
+    "build:windows": "node scripts/build-windows.mjs",
+    "sign": "node scripts/sign-only.mjs",
     "fingerprint": "node scripts/fingerprint.mjs",
     "install-device": "node scripts/run-bubblewrap.mjs install"
   }

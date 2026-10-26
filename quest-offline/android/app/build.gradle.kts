@@ -24,8 +24,8 @@ android {
         applicationId = "com.smallerbytes.defuseprotocol"
         minSdk = 34
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.2.0"
+        versionCode = 9
+        versionName = "1.2.1"
 
         resValue("string", "oculus_app_id", oculusAppId)
 

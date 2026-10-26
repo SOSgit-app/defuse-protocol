@@ -1,7 +1,7 @@
 /**
- * AR manual placement — sticks + two-handed grip grab (hold both grips to
- * move / turn / resize the table like you're holding it).
- * Trigger locks the stage until MOVE BOMB unlocks it again.
+ * Bomb/table placement + free transform.
+ * - AR setup: sticks + dual grips until TRIGGER LOCK (timer paused).
+ * - Anytime in VR/AR: hold BOTH grips to move / twist / resize (game keeps running).
  */
 import * as THREE from 'three';
 
@@ -14,9 +14,10 @@ const SCALE_MIN = 0.55;
 const SCALE_MAX = 1.65;
 const HEIGHT_MIN = 0.12;
 const HEIGHT_MAX = 1.55;
-const GRIP_HOLD = 0.55; // both grips above this = two-hand grab
+const GRIP_HOLD = 0.55;
 const HINT_IDLE = 'TIMER PAUSED · BOTH GRIPS / STICKS · TRIGGER LOCK';
 const HINT_HOLD = 'HOLDING — MOVE HANDS / SPREAD TO RESIZE · TRIGGER LOCK';
+const HINT_FREE = 'BOTH GRIPS — MOVE / TURN / RESIZE';
 
 function readAxes(gamepad) {
   if (!gamepad || !gamepad.axes) return { x: 0, y: 0 };
@@ -56,6 +57,7 @@ export function createArPlacement({ renderer, scene, stage }) {
   let stageScale = 1;
   let defaultHeight = 0.75;
   let yawOffset = 0;
+  let menuBlocked = false;
   /** @type {null | {
    *   mid: THREE.Vector3, dist: number, yaw: number,
    *   stagePos: THREE.Vector3, stageScale: number, stageYaw: number
@@ -92,7 +94,6 @@ export function createArPlacement({ renderer, scene, stage }) {
     const next = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, Number(m) || 0.75));
     const prev = defaultHeight;
     defaultHeight = next;
-    // Keep the table's relative offset when the setting changes mid-session.
     if (active) stage.position.y += next - prev;
   }
 
@@ -132,6 +133,7 @@ export function createArPlacement({ renderer, scene, stage }) {
     hint.material.needsUpdate = true;
   }
 
+  /** AR: spawn in front, require TRIGGER LOCK before the clock runs. */
   function begin() {
     active = true;
     placed = false;
@@ -142,10 +144,27 @@ export function createArPlacement({ renderer, scene, stage }) {
     hint.visible = true;
   }
 
+  /**
+   * VR (or post-lock): grips work anytime; sticks do not steal locomotion.
+   * Keeps current stage pose if already set.
+   */
+  function attachSession() {
+    active = true;
+    placed = true;
+    dualHold = null;
+    hint.visible = false;
+    if (stage.position.lengthSq() < 1e-8) {
+      stage.position.set(0, defaultHeight, 0);
+    }
+    stageScale = stage.scale.x || 1;
+    applyScale();
+  }
+
   function end() {
     active = false;
     placed = false;
     dualHold = null;
+    menuBlocked = false;
     hint.visible = false;
     resetStageHome();
   }
@@ -160,12 +179,24 @@ export function createArPlacement({ renderer, scene, stage }) {
     hint.visible = true;
   }
 
+  function setMenuBlocked(on) {
+    menuBlocked = !!on;
+    if (menuBlocked && dualHold) {
+      yawOffset = stage.rotation.y - facePlayerYaw();
+      dualHold = null;
+    }
+  }
+
   function isPlacing() {
     return active && !placed;
   }
 
   function isPlaced() {
     return !active || placed;
+  }
+
+  function isGrabbing() {
+    return !!dualHold;
   }
 
   function gripWorldPos(handedness, out) {
@@ -187,10 +218,9 @@ export function createArPlacement({ renderer, scene, stage }) {
 
   function releaseDualHold() {
     if (!dualHold) return;
-    // Preserve the orientation the hands left the table in.
     yawOffset = stage.rotation.y - facePlayerYaw();
     dualHold = null;
-    setHint(HINT_IDLE);
+    if (!placed) setHint(HINT_IDLE);
   }
 
   function tick(dt) {
@@ -202,15 +232,12 @@ export function createArPlacement({ renderer, scene, stage }) {
     hint.position.copy(stage.position);
     hint.position.y += 0.28 * stageScale;
 
-    if (placed) {
-      hint.visible = false;
-      dualHold = null;
+    const session = renderer.xr.getSession();
+    if (!session || menuBlocked) {
+      if (dualHold) releaseDualHold();
+      hint.visible = !placed;
       return;
     }
-
-    hint.visible = true;
-    const session = renderer.xr.getSession();
-    if (!session) return;
 
     let movePad = { x: 0, y: 0 };
     let lookPad = { x: 0, y: 0 };
@@ -241,6 +268,7 @@ export function createArPlacement({ renderer, scene, stage }) {
       gripWorldPos('left', _leftPos) &&
       gripWorldPos('right', _rightPos);
 
+    // Dual-grip grab works anytime (VR + AR, even after lock).
     if (bothGrips) {
       _mid.addVectors(_leftPos, _rightPos).multiplyScalar(0.5);
       const dist = Math.max(0.04, _leftPos.distanceTo(_rightPos));
@@ -255,7 +283,7 @@ export function createArPlacement({ renderer, scene, stage }) {
           stageScale,
           stageYaw: stage.rotation.y
         };
-        setHint(HINT_HOLD);
+        setHint(placed ? HINT_FREE : HINT_HOLD);
       } else {
         _delta.subVectors(_mid, dualHold.mid);
         stage.position.copy(dualHold.stagePos).add(_delta);
@@ -268,15 +296,21 @@ export function createArPlacement({ renderer, scene, stage }) {
           SCALE_MAX
         );
         applyScale();
-
-        // Yaw follows the line between your hands (table turns with the grab).
         stage.rotation.y = dualHold.stageYaw + (yaw - dualHold.yaw);
       }
+      hint.visible = true;
       return;
     }
 
     if (dualHold) releaseDualHold();
 
+    // Stick / single-grip controls only during AR setup (before lock).
+    if (placed) {
+      hint.visible = false;
+      return;
+    }
+
+    hint.visible = true;
     const cam = renderer.xr.getCamera();
     cam.getWorldDirection(_fwd);
     _fwd.y = 0;
@@ -302,10 +336,8 @@ export function createArPlacement({ renderer, scene, stage }) {
       );
     }
 
-    // Keep the bomb face toward you while placing; R-stick X is a yaw offset.
     applyFacing();
 
-    // Single-grip fallback: right = bigger, left = smaller
     if (grow > 0.08) stageScale += grow * SCALE_SPEED * dt;
     if (shrink > 0.08) stageScale -= shrink * SCALE_SPEED * dt;
     stageScale = THREE.MathUtils.clamp(stageScale, SCALE_MIN, SCALE_MAX);
@@ -322,12 +354,15 @@ export function createArPlacement({ renderer, scene, stage }) {
 
   return {
     begin,
+    attachSession,
     end,
     unlock,
     tick,
     tryPlace,
     isPlacing,
     isPlaced,
+    isGrabbing,
+    setMenuBlocked,
     resetStageHome,
     setDefaultHeight
   };
